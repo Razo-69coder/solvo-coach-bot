@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Solvo Coach API", lifespan=lifespan)
+app = FastAPI(title="Solvo Fit API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -347,4 +347,4 @@ async def admin_toggle_active(trainer_id: int):
 
 @app.get("/")
 async def root():
-    return {"ok": True, "app": "Solvo Coach API", "version": "1.0.0"}
+    return {"ok": True, "app": "Solvo Fit API", "version": "1.0.0"}
