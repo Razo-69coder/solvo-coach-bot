@@ -24,12 +24,15 @@ from database import (
     get_active_subscription,
     get_payments, create_payment, mark_payment_paid,
     get_stats,
+    get_client_body, add_client_body, get_client_body_history,
+    get_workout_program, save_workout_program,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
     ClientCreateRequest, ClientUpdateRequest,
     SessionCreateRequest, SessionStatusRequest,
     SubscriptionCreateRequest, PaymentCreateRequest,
+    ClientBodyRequest, WorkoutProgramRequest,
 )
 
 load_dotenv()
@@ -300,6 +303,47 @@ async def deactivate_subscription_endpoint(sub_id: int, trainer_id: int = get_cu
     if not ok:
         raise HTTPException(404, "Абонемент не найден")
     return {"ok": True}
+
+
+# ─── Client Body ──────────────────────────────────────────
+
+@app.get("/api/v1/clients/{client_id}/body")
+async def get_client_body_endpoint(client_id: int, trainer_id: int = get_current_trainer_id):  # type: ignore
+    body = await get_client_body(client_id, trainer_id)
+    if not body:
+        raise HTTPException(404, "Данные не найдены")
+    return body
+
+
+@app.post("/api/v1/clients/{client_id}/body", status_code=201)
+async def add_client_body_endpoint(client_id: int, body: ClientBodyRequest, trainer_id: int = get_current_trainer_id):  # type: ignore
+    row_id = await add_client_body(
+        client_id, trainer_id, body.height_cm, body.weight_kg,
+        body.age, body.goal, body.health_notes, body.measured_at
+    )
+    return {"id": row_id}
+
+
+@app.get("/api/v1/clients/{client_id}/body/history")
+async def get_client_body_history_endpoint(client_id: int, trainer_id: int = get_current_trainer_id):  # type: ignore
+    history = await get_client_body_history(client_id)
+    return {"history": history}
+
+
+# ─── Workout Programs ─────────────────────────────────────
+
+@app.get("/api/v1/clients/{client_id}/program")
+async def get_program_endpoint(client_id: int, trainer_id: int = get_current_trainer_id):  # type: ignore
+    program = await get_workout_program(client_id, trainer_id)
+    if not program:
+        raise HTTPException(404, "Программа не найдена")
+    return program
+
+
+@app.post("/api/v1/clients/{client_id}/program", status_code=201)
+async def save_program_endpoint(client_id: int, body: WorkoutProgramRequest, trainer_id: int = get_current_trainer_id):  # type: ignore
+    row_id = await save_workout_program(client_id, trainer_id, body.title, body.content)
+    return {"id": row_id}
 
 
 # ─── Payments ─────────────────────────────────────────────

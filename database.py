@@ -82,6 +82,29 @@ async def init_db():
             )
         """)
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS client_body (
+                id SERIAL PRIMARY KEY,
+                client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+                trainer_id INTEGER NOT NULL,
+                height_cm FLOAT,
+                weight_kg FLOAT,
+                age INTEGER,
+                goal TEXT DEFAULT '',
+                health_notes TEXT DEFAULT '',
+                measured_at TEXT NOT NULL
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS workout_programs (
+                id SERIAL PRIMARY KEY,
+                client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+                trainer_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS payments (
                 id SERIAL PRIMARY KEY,
                 trainer_id INTEGER NOT NULL REFERENCES trainers(id) ON DELETE CASCADE,
@@ -456,3 +479,54 @@ async def get_stats(trainer_id: int) -> dict:
         "total_debt": total_debt or 0,
         "active_subscriptions": active_subs or 0,
     }
+
+
+# ─── Client Body ───────────────────────────────────────────
+
+async def get_client_body(client_id: int, trainer_id: int) -> dict | None:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        return await _fetchrow(conn,
+            "SELECT id, client_id, height_cm, weight_kg, age, goal, health_notes, measured_at "
+            "FROM client_body WHERE client_id=%s AND trainer_id=%s "
+            "ORDER BY id DESC LIMIT 1", client_id, trainer_id)
+
+
+async def add_client_body(client_id: int, trainer_id: int, height_cm: float, weight_kg: float,
+                          age: int, goal: str, health_notes: str, measured_at: str) -> int:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        row = await _fetchrow(conn,
+            "INSERT INTO client_body (client_id, trainer_id, height_cm, weight_kg, age, goal, health_notes, measured_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            client_id, trainer_id, height_cm, weight_kg, age, goal, health_notes, measured_at)
+    return row["id"]
+
+
+async def get_client_body_history(client_id: int) -> list:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        return await _fetch(conn,
+            "SELECT id, height_cm, weight_kg, age, goal, health_notes, measured_at "
+            "FROM client_body WHERE client_id=%s ORDER BY measured_at DESC", client_id)
+
+
+# ─── Workout Programs ──────────────────────────────────────
+
+async def get_workout_program(client_id: int, trainer_id: int) -> dict | None:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        return await _fetchrow(conn,
+            "SELECT id, client_id, title, content, created_at "
+            "FROM workout_programs WHERE client_id=%s AND trainer_id=%s "
+            "ORDER BY created_at DESC LIMIT 1", client_id, trainer_id)
+
+
+async def save_workout_program(client_id: int, trainer_id: int, title: str, content: str) -> int:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        row = await _fetchrow(conn,
+            "INSERT INTO workout_programs (client_id, trainer_id, title, content) "
+            "VALUES (%s, %s, %s, %s) RETURNING id",
+            client_id, trainer_id, title, content)
+    return row["id"]

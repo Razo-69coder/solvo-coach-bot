@@ -62,3 +62,17 @@ class PaymentCreateRequest(BaseModel):
     description: str = ""
     payment_date: str
     is_paid: bool = False
+
+
+class ClientBodyRequest(BaseModel):
+    height_cm: float
+    weight_kg: float
+    age: int
+    goal: str = ""
+    health_notes: str = ""
+    measured_at: str
+
+
+class WorkoutProgramRequest(BaseModel):
+    title: str
+    content: str
