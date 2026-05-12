@@ -26,6 +26,7 @@ from database import (
     get_stats,
     get_client_body, add_client_body, get_client_body_history,
     get_workout_program, save_workout_program,
+    generate_client_pin, get_client_by_pin, get_client_schedule,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -33,6 +34,7 @@ from models import (
     SessionCreateRequest, SessionStatusRequest,
     SubscriptionCreateRequest, PaymentCreateRequest,
     ClientBodyRequest, WorkoutProgramRequest,
+    ClientLoginRequest,
 )
 
 load_dotenv()
@@ -77,6 +79,21 @@ def decode_jwt(token: str) -> dict | None:
 def create_admin_token() -> str:
     payload = {"role": "admin", "exp": datetime.utcnow() + timedelta(hours=12)}
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+def generate_client_jwt(client_id: int, trainer_id: int) -> str:
+    payload = {"cid": client_id, "tid": trainer_id, "role": "client",
+               "exp": datetime.utcnow() + timedelta(days=365)}
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+async def get_current_client(authorization: str = Header(None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Требуется авторизация")
+    payload = decode_jwt(authorization[7:])
+    if not payload or payload.get("role") != "client":
+        raise HTTPException(401, "Неверный токен клиента")
+    return {"client_id": int(payload["cid"]), "trainer_id": int(payload["tid"])}
 
 
 async def get_current_trainer_id(authorization: str = Header(None)) -> int:
@@ -398,6 +415,64 @@ async def admin_toggle_active(trainer_id: int):
     new_active = not trainer["is_active"]
     await set_trainer_active(trainer_id, new_active)
     return {"ok": True, "is_active": new_active}
+
+
+# ─── Client Auth ──────────────────────────────────────────
+
+@app.post("/api/v1/client/login")
+async def client_login(body: ClientLoginRequest):
+    data = await get_client_by_pin(body.pin_code)
+    if not data:
+        raise HTTPException(401, "Неверный PIN-код")
+    token = generate_client_jwt(data["client_id"], data["trainer_id"])
+    return {"token": token, "client": data}
+
+
+@app.post("/api/v1/clients/{client_id}/pin")
+async def create_client_pin(client_id: int, trainer_id: int = Depends(get_current_trainer_id)):  # type: ignore
+    client = await get_client(client_id, trainer_id)
+    if not client:
+        raise HTTPException(404, "Клиент не найден")
+    pin = await generate_client_pin(client_id, trainer_id)
+    return {"pin": pin}
+
+
+# ─── Client API (клиентский режим) ────────────────────────
+
+@app.get("/api/v1/client/me")
+async def client_me(current: dict = Depends(get_current_client)):
+    client = await get_client(current["client_id"], current["trainer_id"])
+    if not client:
+        raise HTTPException(404, "Клиент не найден")
+    return client
+
+
+@app.get("/api/v1/client/schedule")
+async def client_schedule(date: str = Query(...), current: dict = Depends(get_current_client)):
+    sessions = await get_client_schedule(current["client_id"], date)
+    return {"date": date, "sessions": sessions}
+
+
+@app.get("/api/v1/client/program")
+async def client_program(current: dict = Depends(get_current_client)):
+    program = await get_workout_program(current["client_id"], current["trainer_id"])
+    if not program:
+        raise HTTPException(404, "Программа не найдена")
+    return program
+
+
+@app.get("/api/v1/client/body")
+async def client_body(current: dict = Depends(get_current_client)):
+    body = await get_client_body(current["client_id"], current["trainer_id"])
+    if not body:
+        raise HTTPException(404, "Данные не найдены")
+    return body
+
+
+@app.get("/api/v1/client/body/history")
+async def client_body_history(current: dict = Depends(get_current_client)):
+    history = await get_client_body_history(current["client_id"])
+    return {"history": history}
 
 
 # ─── Health ───────────────────────────────────────────────

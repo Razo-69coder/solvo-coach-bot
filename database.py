@@ -105,6 +105,15 @@ async def init_db():
             )
         """)
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS client_auth (
+                id SERIAL PRIMARY KEY,
+                client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+                trainer_id INTEGER REFERENCES trainers(id) ON DELETE CASCADE,
+                pin_code VARCHAR(6) UNIQUE NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS payments (
                 id SERIAL PRIMARY KEY,
                 trainer_id INTEGER NOT NULL REFERENCES trainers(id) ON DELETE CASCADE,
@@ -530,3 +539,47 @@ async def save_workout_program(client_id: int, trainer_id: int, title: str, cont
             "VALUES (%s, %s, %s, %s) RETURNING id",
             client_id, trainer_id, title, content)
     return row["id"]
+
+
+# ─── Client Auth ──────────────────────────────────────────
+
+async def generate_client_pin(client_id: int, trainer_id: int) -> str:
+    import random
+    import string
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        while True:
+            pin = ''.join(random.choices(string.digits, k=6))
+            existing = await _fetchval(conn, "SELECT id FROM client_auth WHERE pin_code=%s", pin)
+            if not existing:
+                break
+        await _execute(conn,
+            "INSERT INTO client_auth (client_id, trainer_id, pin_code) "
+            "VALUES (%s, %s, %s) "
+            "ON CONFLICT (client_id) DO UPDATE SET pin_code=%s",
+            client_id, trainer_id, pin, pin)
+    return pin
+
+
+async def get_client_by_pin(pin: str) -> dict | None:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        return await _fetchrow(conn, """
+            SELECT ca.client_id, ca.trainer_id, ca.pin_code,
+                   c.name, c.phone, c.gender, c.telegram_username
+            FROM client_auth ca
+            JOIN clients c ON c.id = ca.client_id
+            WHERE ca.pin_code = %s
+        """, pin)
+
+
+async def get_client_schedule(client_id: int, date: str) -> list:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        return await _fetch(conn, """
+            SELECT s.*, c.name as client_name
+            FROM sessions s
+            JOIN clients c ON c.id = s.client_id
+            WHERE s.client_id = %s AND s.session_date = %s
+            ORDER BY s.time
+        """, client_id, date)

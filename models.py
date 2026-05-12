@@ -76,3 +76,7 @@ class ClientBodyRequest(BaseModel):
 class WorkoutProgramRequest(BaseModel):
     title: str
     content: str
+
+
+class ClientLoginRequest(BaseModel):
+    pin_code: str
