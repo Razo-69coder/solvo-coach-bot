@@ -3,12 +3,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
 
-import jwt as jose_jwt
+import jwt
+import bcrypt
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from passlib.hash import bcrypt as bcrypt_hasher
 
 from database import (
     init_db,
@@ -59,19 +59,19 @@ app.add_middleware(
 
 def generate_jwt(trainer_id: int) -> str:
     payload = {"tid": trainer_id, "exp": datetime.utcnow() + timedelta(days=365)}
-    return jose_jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 
 def decode_jwt(token: str) -> dict | None:
     try:
-        return jose_jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-    except jose_jwt.InvalidTokenError:
+        return jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except jwt.InvalidTokenError:
         return None
 
 
 def create_admin_token() -> str:
     payload = {"role": "admin", "exp": datetime.utcnow() + timedelta(hours=12)}
-    return jose_jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 
 async def get_current_trainer_id(authorization: str = Header(None)) -> int:
@@ -122,7 +122,7 @@ async def register(body: TrainerRegisterRequest):
     if existing:
         raise HTTPException(400, "Email уже занят")
 
-    password_hash = bcrypt_hasher.hash(body.password)
+    password_hash = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
     trainer_id = await create_trainer(body.email, password_hash, body.name, body.phone)
     trainer = await get_trainer_by_id(trainer_id)
     if not trainer:
@@ -135,7 +135,7 @@ async def register(body: TrainerRegisterRequest):
 @app.post("/api/v1/auth/login")
 async def login(body: TrainerLoginRequest):
     trainer = await get_trainer_by_email(body.email)
-    if not trainer or not bcrypt_hasher.verify(body.password, trainer["password_hash"]):
+    if not trainer or not bcrypt.checkpw(body.password.encode(), trainer["password_hash"].encode()):
         raise HTTPException(401, "Неверный email или пароль")
 
     token = generate_jwt(trainer["id"])
