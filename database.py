@@ -541,6 +541,51 @@ async def save_workout_program(client_id: int, trainer_id: int, title: str, cont
     return row["id"]
 
 
+# ─── Client Analytics ─────────────────────────────────────
+
+async def get_client_analytics(client_id: int, trainer_id: int) -> dict:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        total = await _fetchval(conn,
+            "SELECT COUNT(*) FROM sessions WHERE client_id=%s AND trainer_id=%s",
+            client_id, trainer_id) or 0
+        completed = await _fetchval(conn,
+            "SELECT COUNT(*) FROM sessions WHERE client_id=%s AND trainer_id=%s AND status='completed'",
+            client_id, trainer_id) or 0
+        cancelled = await _fetchval(conn,
+            "SELECT COUNT(*) FROM sessions WHERE client_id=%s AND trainer_id=%s AND status='cancelled'",
+            client_id, trainer_id) or 0
+        revenue = await _fetchval(conn,
+            "SELECT COALESCE(SUM(amount),0) FROM payments WHERE client_id=%s AND trainer_id=%s AND is_paid=true",
+            client_id, trainer_id) or 0
+        debt = await _fetchval(conn,
+            "SELECT COALESCE(SUM(amount),0) FROM payments WHERE client_id=%s AND trainer_id=%s AND is_paid=false",
+            client_id, trainer_id) or 0
+        last_session = await _fetchval(conn,
+            "SELECT session_date FROM sessions WHERE client_id=%s AND trainer_id=%s ORDER BY session_date DESC LIMIT 1",
+            client_id, trainer_id)
+    attendance = round((completed / total * 100) if total > 0 else 0, 1)
+    days_inactive = 0
+    if last_session and total > 0:
+        from datetime import date
+        try:
+            parts = last_session.split("-")
+            last_d = date(int(parts[0]), int(parts[1]), int(parts[2]))
+            days_inactive = (date.today() - last_d).days
+        except Exception:
+            days_inactive = 0
+    return {
+        "total_sessions": total,
+        "completed_sessions": completed,
+        "cancelled_sessions": cancelled,
+        "attendance_percent": attendance,
+        "revenue": float(revenue),
+        "debt": float(debt),
+        "days_inactive": days_inactive,
+        "churn_risk": days_inactive >= 14,
+    }
+
+
 # ─── Client Auth ──────────────────────────────────────────
 
 async def generate_client_pin(client_id: int, trainer_id: int) -> str:

@@ -27,6 +27,7 @@ from database import (
     get_client_body, add_client_body, get_client_body_history,
     get_workout_program, save_workout_program,
     generate_client_pin, get_client_by_pin, get_client_schedule,
+    get_client_analytics,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -232,6 +233,14 @@ async def get_client_detail(client_id: int, trainer_id: int = Depends(get_curren
     history = await get_client_session_history(client_id)
     active_sub = await get_active_subscription(client_id, trainer_id)
     return {"client": client, "history": history, "active_subscription": active_sub}
+
+
+@app.get("/api/v1/clients/{client_id}/analytics")
+async def get_client_analytics_endpoint(client_id: int, trainer_id: int = Depends(get_current_trainer_id)):  # type: ignore
+    client = await get_client(client_id, trainer_id)
+    if not client:
+        raise HTTPException(404, "Клиент не найден")
+    return await get_client_analytics(client_id, trainer_id)
 
 
 @app.put("/api/v1/clients/{client_id}")
