@@ -4,7 +4,9 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import jwt
-import bcrypt
+import hashlib
+import hmac
+import os as _os
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -114,6 +116,16 @@ async def send_tg_message(chat_id: int, text: str):
             pass
 
 
+def _verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt, key = stored_hash.split(":")
+        return hmac.compare_digest(
+            hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 260000).hex(), key
+        )
+    except Exception:
+        return False
+
+
 # ─── Auth ─────────────────────────────────────────────────
 
 @app.post("/api/v1/auth/register")
@@ -122,7 +134,8 @@ async def register(body: TrainerRegisterRequest):
     if existing:
         raise HTTPException(400, "Email уже занят")
 
-    password_hash = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
+    salt = _os.urandom(16).hex()
+    password_hash = salt + ":" + hashlib.pbkdf2_hmac("sha256", body.password.encode(), salt.encode(), 260000).hex()
     trainer_id = await create_trainer(body.email, password_hash, body.name, body.phone)
     trainer = await get_trainer_by_id(trainer_id)
     if not trainer:
@@ -135,7 +148,7 @@ async def register(body: TrainerRegisterRequest):
 @app.post("/api/v1/auth/login")
 async def login(body: TrainerLoginRequest):
     trainer = await get_trainer_by_email(body.email)
-    if not trainer or not bcrypt.checkpw(body.password.encode(), trainer["password_hash"].encode()):
+    if not trainer or not _verify_password(body.password, trainer["password_hash"]):
         raise HTTPException(401, "Неверный email или пароль")
 
     token = generate_jwt(trainer["id"])
