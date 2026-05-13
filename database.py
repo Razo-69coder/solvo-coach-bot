@@ -136,6 +136,16 @@ async def init_db():
             )
         """)
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS session_exercises (
+                id SERIAL PRIMARY KEY,
+                session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+                exercise_name TEXT NOT NULL,
+                muscle_group TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS payments (
                 id SERIAL PRIMARY KEY,
                 trainer_id INTEGER NOT NULL REFERENCES trainers(id) ON DELETE CASCADE,
@@ -828,6 +838,44 @@ async def get_client_progress_summary(client_id: int, trainer_id: int) -> dict:
         "week_done": week_done,
         "week_planned": week_planned,
     }
+
+
+MUSCLE_GROUP_MAP = {
+    "Грудь": ["жим лёжа", "жим лежа", "отжимания", "сведение в кроссовере", "кроссовер", "жим гантелей лёжа", "жим гантелей лежа"],
+    "Спина": ["тяга верхнего блока", "тяга штанги", "подтягивания", "тяга гантели", "тяга в наклоне", "пуловер"],
+    "Ноги":  ["присед", "приседания", "жим ногами", "выпады", "румынская тяга", "разгибание ног", "сгибание ног", "ягодичный мост"],
+    "Плечи": ["жим стоя", "жим гантелей сидя", "разводка", "тяга к подбородку", "армейский жим", "махи в стороны"],
+    "Руки":  ["подъём на бицепс", "подъем на бицепс", "трицепсовый блок", "молотки", "французский жим", "разгибание на блоке"],
+    "Пресс": ["скручивания", "планка", "подъём ног", "подъем ног", "вакуум", "качать пресс"],
+}
+MUSCLE_GROUP_NAMES = list(MUSCLE_GROUP_MAP.keys())
+
+
+def classify_exercise(name: str) -> str:
+    nl = name.lower().strip()
+    for group, keywords in MUSCLE_GROUP_MAP.items():
+        for kw in keywords:
+            if kw in nl:
+                return group
+    return "Прочее"
+
+
+async def get_muscle_map(client_id: int, days: int = 7) -> dict:
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    pool = await get_pool()
+    groups = {g: 0 for g in MUSCLE_GROUP_NAMES}
+    async with pool.connection() as conn:
+        rows = await _fetch(conn, """
+            SELECT exercise_name FROM session_exercises
+            WHERE client_id=%s AND created_at::date>=%s
+        """, client_id, cutoff)
+        for r in rows:
+            mg = classify_exercise(r["exercise_name"])
+            if mg in groups:
+                groups[mg] += 1
+    result = [{"name": g, "count": groups[g]} for g in MUSCLE_GROUP_NAMES]
+    return {"muscle_groups": result}
 
 
 async def get_client_schedule(client_id: int, date: str) -> list:

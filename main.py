@@ -32,6 +32,7 @@ from database import (
     save_pr, get_pr_list, get_pr_history,
     get_client_weekly_report,
     get_client_progress_summary,
+    get_muscle_map,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -550,6 +551,16 @@ async def client_progress_summary(current: dict = Depends(get_current_client)):
     return await get_client_progress_summary(
         current["client_id"], current["trainer_id"]
     )
+
+
+# ─── Muscle Map ─────────────────────────────────────────────
+
+@app.get("/api/v1/client/muscle-map")
+async def client_muscle_map(
+    days: int = Query(7),
+    current: dict = Depends(get_current_client),
+):
+    return await get_muscle_map(current["client_id"], days)
 
 
 # ─── Health ───────────────────────────────────────────────
