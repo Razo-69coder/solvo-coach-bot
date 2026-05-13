@@ -794,6 +794,183 @@ async def cal_ai_analyze(
     return result
 
 
+# ─── Body Analysis ───────────────────────────────────────
+
+MOCK_BODY_ANALYSIS_RESPONSE = {
+    "body_analysis": "Эктоморфное телосложение, узкие плечи, небольшая сутулость в грудном отделе. "
+                     "Слабые группы: спина, задняя поверхность бедра, ягодицы. "
+                     "Рекомендуется акцент на тяговые движения и укрепление кора.",
+    "program": "Программа на месяц: 3 тренировки в неделю. Первые 2 недели — "
+               "адаптация и постановка техники. Третья неделя — прогрессия нагрузки. "
+               "Четвёртая неделя — интенсивный цикл с суперсетами.",
+    "weeks": [
+        {
+            "week": 1,
+            "days": [
+                {
+                    "day": 1,
+                    "exercises": [
+                        {"name": "Приседания с собственным весом", "sets": 3, "reps": 12, "note": "Медленный темп"},
+                        {"name": "Тяга гантели к поясу", "sets": 3, "reps": 10, "note": "Лёгкий вес"},
+                        {"name": "Ягодичный мостик", "sets": 3, "reps": 15, "note": ""}
+                    ]
+                },
+                {
+                    "day": 2,
+                    "exercises": [
+                        {"name": "Отжимания от пола", "sets": 3, "reps": 8, "note": "С колен если тяжело"},
+                        {"name": "Планка", "sets": 3, "reps": 1, "note": "30 секунд"},
+                        {"name": "Выпады назад", "sets": 3, "reps": 10, "note": "На каждую ногу"}
+                    ]
+                }
+            ]
+        },
+        {
+            "week": 2,
+            "days": [
+                {
+                    "day": 1,
+                    "exercises": [
+                        {"name": "Приседания с гантелью", "sets": 3, "reps": 10, "note": "Вес 6-8 кг"},
+                        {"name": "Тяга гантели двумя руками", "sets": 3, "reps": 12, "note": ""},
+                        {"name": "Подъём ног лёжа", "sets": 3, "reps": 12, "note": ""}
+                    ]
+                }
+            ]
+        },
+        {
+            "week": 3,
+            "days": [
+                {
+                    "day": 1,
+                    "exercises": [
+                        {"name": "Болгарские выпады", "sets": 3, "reps": 8, "note": "На каждую ногу"},
+                        {"name": "Тяга штанги в наклоне", "sets": 4, "reps": 8, "note": "Техника важнее веса"},
+                        {"name": "Гиперэкстензия", "sets": 3, "reps": 12, "note": ""}
+                    ]
+                }
+            ]
+        },
+        {
+            "week": 4,
+            "days": [
+                {
+                    "day": 1,
+                    "exercises": [
+                        {"name": "Суперсет: присед + тяга", "sets": 3, "reps": 10, "note": "Без отдыха между"},
+                        {"name": "Бёрпи", "sets": 3, "reps": 8, "note": ""},
+                        {"name": "Становая тяга с гантелями", "sets": 3, "reps": 10, "note": "Контролируй поясницу"}
+                    ]
+                }
+            ]
+        }
+    ]
+}
+
+BODY_ANALYSIS_PROMPT_TEMPLATE = (
+    "Ты опытный персональный тренер. Проанализируй фото тела клиента и составь "
+    "программу тренировок на месяц (4 недели).\n"
+    "Параметры: цель={goal}, уровень={level}, оборудование={equipment}, "
+    "ограничения={limitations}.\n"
+    "По фото определи: тип телосложения, проблемные зоны, слабые группы мышц, осанку.\n"
+    "Верни JSON: {{\"body_analysis\": string, \"program\": string, \"weeks\": "
+    "[{{week, days: [{{day, exercises: [{{name, sets, reps, note}}]}}]}}]}}"
+)
+
+
+@app.post("/api/v1/body-analysis/analyze")
+async def body_analysis_analyze(
+    photo_front: UploadFile = File(None),
+    photo_side: UploadFile = File(None),
+    goal: str = Form(...),
+    level: str = Form(...),
+    equipment: str = Form(...),
+    limitations: str = Form(""),
+    authorization: str = Header(None),
+):
+    user = _get_cal_ai_user(authorization)
+
+    photo_base64_front = None
+    photo_base64_side = None
+    if photo_front:
+        photo_base64_front = base64.b64encode(await photo_front.read()).decode()
+    if photo_side:
+        photo_base64_side = base64.b64encode(await photo_side.read()).decode()
+
+    prompt = BODY_ANALYSIS_PROMPT_TEMPLATE.format(
+        goal=goal, level=level, equipment=equipment, limitations=limitations
+    )
+
+    result = None
+    if ANTHROPIC_API_KEY:
+        result = await call_claude_vision_opus(photo_base64_front, photo_base64_side, prompt)
+
+    if result is None:
+        result = dict(MOCK_BODY_ANALYSIS_RESPONSE)
+        if ANTHROPIC_API_KEY:
+            result["note"] = "Ошибка анализа, использована заглушка"
+
+    return result
+
+
+async def call_claude_vision_opus(
+    photo_base64_front: str | None,
+    photo_base64_side: str | None,
+    prompt: str,
+) -> dict | None:
+    if not ANTHROPIC_API_KEY:
+        return None
+    content = []
+    if photo_base64_front:
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": photo_base64_front,
+            },
+        })
+    if photo_base64_side:
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": photo_base64_side,
+            },
+        })
+    content.append({"type": "text", "text": prompt})
+
+    body = {
+        "model": "claude-opus-4-7",
+        "max_tokens": 2048,
+        "messages": [{"role": "user", "content": content}],
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=body,
+        )
+    if resp.status_code != 200:
+        return None
+    data = resp.json()
+    for block in data.get("content", []):
+        if block.get("type") == "text":
+            text = block["text"].strip()
+            m = re.search(r"\{.*\}", text, re.DOTALL)
+            if m:
+                try:
+                    return json.loads(m.group())
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
 # ─── Health ───────────────────────────────────────────────
 
 @app.get("/")
