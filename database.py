@@ -878,6 +878,60 @@ async def get_muscle_map(client_id: int, days: int = 7) -> dict:
     return {"muscle_groups": result}
 
 
+async def get_leaderboard(trainer_id: int, month: str) -> dict:
+    from datetime import date
+    year, m = map(int, month.split("-"))
+    ms = date(year, m, 1).isoformat()
+    me = date(year + 1, 1, 1).isoformat() if m == 12 else date(year, m + 1, 1).isoformat()
+
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        rows = await _fetch(conn, """
+            SELECT c.id, c.name, COUNT(s.id) as cnt
+            FROM clients c
+            LEFT JOIN sessions s ON s.client_id = c.id AND s.trainer_id = c.trainer_id
+                AND s.status = 'completed'
+                AND s.session_date >= %s AND s.session_date < %s
+            WHERE c.trainer_id = %s
+            GROUP BY c.id, c.name
+            ORDER BY cnt DESC, c.name
+        """, ms, me, trainer_id)
+    result = []
+    for i, r in enumerate(rows):
+        result.append({
+            "client_id": r["id"],
+            "name": r["name"],
+            "sessions_count": r["cnt"],
+            "rank": i + 1,
+        })
+    return {"leaderboard": result, "month": month}
+
+
+async def get_client_rank(client_id: int, trainer_id: int, month: str) -> dict:
+    lb = await get_leaderboard(trainer_id, month)
+    entries = lb["leaderboard"]
+    total = len(entries)
+    my_idx = None
+    my_sessions = 0
+    for i, e in enumerate(entries):
+        if e["client_id"] == client_id:
+            my_idx = i
+            my_sessions = e["sessions_count"]
+            break
+    rank = my_idx + 1 if my_idx is not None else total + 1
+    sessions_to_next = None
+    if my_idx is not None and my_idx > 0:
+        sessions_to_next = entries[my_idx - 1]["sessions_count"] - my_sessions
+        if sessions_to_next < 0:
+            sessions_to_next = 0
+    return {
+        "rank": rank,
+        "total_clients": total,
+        "sessions_count": my_sessions,
+        "sessions_to_next": sessions_to_next,
+    }
+
+
 async def get_client_schedule(client_id: int, date: str) -> list:
     pool = await get_pool()
     async with pool.connection() as conn:

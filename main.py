@@ -33,6 +33,8 @@ from database import (
     get_client_weekly_report,
     get_client_progress_summary,
     get_muscle_map,
+    get_leaderboard,
+    get_client_rank,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -561,6 +563,24 @@ async def client_muscle_map(
     current: dict = Depends(get_current_client),
 ):
     return await get_muscle_map(current["client_id"], days)
+
+
+# ─── Leaderboard ────────────────────────────────────────────
+
+@app.get("/api/v1/trainer/leaderboard")
+async def trainer_leaderboard(
+    month: str = Query(...),
+    trainer_id: int = Depends(get_current_trainer_id),
+):
+    return await get_leaderboard(trainer_id, month)
+
+
+@app.get("/api/v1/client/my-rank")
+async def client_my_rank(
+    month: str = Query(...),
+    current: dict = Depends(get_current_client),
+):
+    return await get_client_rank(current["client_id"], current["trainer_id"], month)
 
 
 # ─── Health ───────────────────────────────────────────────
