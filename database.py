@@ -1125,6 +1125,40 @@ async def apply_template_to_client(template_id: int, client_id: int, trainer_id:
     return title
 
 
+# ─── Churn Risk ──────────────────────────────────────────
+
+
+async def get_churn_risk(trainer_id: int) -> list[dict]:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        rows = await _fetch(conn, """
+            SELECT
+                c.id AS client_id,
+                c.name,
+                COUNT(s.id) AS missed_count,
+                MAX(s.session_date) AS last_session_date
+            FROM clients c
+            LEFT JOIN sessions s ON c.id = s.client_id
+                AND s.status IN ('no_show', 'cancelled')
+                AND s.session_date::date >= CURRENT_DATE - 14
+            WHERE c.trainer_id = %s
+            GROUP BY c.id, c.name
+            HAVING COUNT(s.id) >= 2
+            ORDER BY missed_count DESC
+        """, trainer_id)
+        result = []
+        for r in rows:
+            risk = "high" if r["missed_count"] >= 3 else "medium"
+            result.append({
+                "client_id": r["client_id"],
+                "name": r["name"],
+                "missed_count": r["missed_count"],
+                "last_session_date": r["last_session_date"] or "",
+                "risk_level": risk,
+            })
+        return result
+
+
 # ─── Onboarding Meta ──────────────────────────────────────
 
 

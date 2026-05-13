@@ -48,6 +48,7 @@ from database import (
     save_cal_ai_log,
     save_onboarding_meta,
     parse_import_file,
+    get_churn_risk,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -224,6 +225,12 @@ async def update_settings(body: TrainerSettingsRequest, trainer_id: int = Depend
 @app.get("/api/v1/trainers/me/stats")
 async def get_my_stats(trainer_id: int = Depends(get_current_trainer_id)):  # type: ignore
     return await get_stats(trainer_id)
+
+
+@app.get("/api/v1/trainer/churn-risk")
+async def churn_risk(trainer_id: int = Depends(get_current_trainer_id)):  # type: ignore
+    clients = await get_churn_risk(trainer_id)
+    return {"clients": clients}
 
 
 # ─── Clients ──────────────────────────────────────────────
