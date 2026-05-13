@@ -50,6 +50,10 @@ from database import (
     parse_import_file,
     get_churn_risk,
     get_client_profitability,
+    get_supplements,
+    create_supplement,
+    update_supplement,
+    delete_supplement,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -62,6 +66,8 @@ from models import (
     PRRequest,
     TemplateCreateRequest,
     OnboardingMetaRequest,
+    SupplementCreateRequest,
+    SupplementUpdateRequest,
 )
 
 load_dotenv()
@@ -612,6 +618,54 @@ async def client_my_rank(
     return await get_client_rank(current["client_id"], current["trainer_id"], month)
 
 
+# ─── Supplements ──────────────────────────────────────────
+
+
+@app.get("/api/v1/client/supplements")
+async def client_supplements(current: dict = Depends(get_current_client)):
+    return {"supplements": await get_supplements(current["client_id"])}
+
+
+@app.post("/api/v1/client/supplements", status_code=201)
+async def client_create_supplement(
+    body: SupplementCreateRequest,
+    current: dict = Depends(get_current_client),
+):
+    sid = await create_supplement(current["client_id"], body.name, body.dose, body.time_of_day, body.notes)
+    return {"id": sid}
+
+
+@app.put("/api/v1/client/supplements/{supplement_id}")
+async def client_update_supplement(
+    supplement_id: int,
+    body: SupplementUpdateRequest,
+    current: dict = Depends(get_current_client),
+):
+    ok = await update_supplement(supplement_id, body.name, body.dose, body.time_of_day, body.notes)
+    if not ok:
+        raise HTTPException(404, "Добавка не найдена")
+    return {"ok": True}
+
+
+@app.delete("/api/v1/client/supplements/{supplement_id}")
+async def client_delete_supplement(
+    supplement_id: int,
+    current: dict = Depends(get_current_client),
+):
+    ok = await delete_supplement(supplement_id)
+    if not ok:
+        raise HTTPException(404, "Добавка не найдена")
+    return {"ok": True}
+
+
+@app.get("/api/v1/trainer/clients/{client_id}/supplements")
+async def trainer_client_supplements(
+    client_id: int,
+    trainer_id: int = Depends(get_current_trainer_id),
+):
+    return {"supplements": await get_supplements(client_id)}
+
+
 # ─── Program Templates ─────────────────────────────────────
 
 @app.post("/api/v1/trainer/templates", status_code=201)
@@ -978,7 +1032,7 @@ async def call_claude_vision_opus(
     content.append({"type": "text", "text": prompt})
 
     body = {
-        "model": "claude-opus-4-7",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 2048,
         "messages": [{"role": "user", "content": content}],
     }
