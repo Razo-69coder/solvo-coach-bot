@@ -771,6 +771,65 @@ async def get_client_weekly_report(client_id: int, trainer_id: int, week_offset:
     }
 
 
+async def get_client_progress_summary(client_id: int, trainer_id: int) -> dict:
+    from datetime import date, timedelta
+    today = date.today()
+    monday = today - timedelta(days=today.weekday())
+
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        total_sessions = await _fetchval(conn,
+            "SELECT COUNT(*) FROM sessions WHERE client_id=%s AND trainer_id=%s AND status='completed'",
+            client_id, trainer_id) or 0
+
+        week_done = await _fetchval(conn,
+            "SELECT COUNT(*) FROM sessions WHERE client_id=%s AND trainer_id=%s "
+            "AND status='completed' AND session_date>=%s",
+            client_id, trainer_id, monday.isoformat()) or 0
+
+        week_planned = await _fetchval(conn,
+            "SELECT COUNT(*) FROM sessions WHERE client_id=%s AND trainer_id=%s "
+            "AND status NOT IN ('cancelled') AND session_date>=%s",
+            client_id, trainer_id, monday.isoformat()) or 0
+
+        pr_row = await _fetchrow(conn,
+            "SELECT exercise_name, weight_kg FROM client_pr "
+            "WHERE client_id=%s ORDER BY weight_kg DESC LIMIT 1", client_id)
+
+        ws_row = await _fetchrow(conn,
+            "SELECT weight_kg FROM client_body WHERE client_id=%s "
+            "ORDER BY measured_at ASC LIMIT 1", client_id)
+
+        wc_row = await _fetchrow(conn,
+            "SELECT weight_kg FROM client_body WHERE client_id=%s "
+            "ORDER BY measured_at DESC LIMIT 1", client_id)
+
+        # Streak: consecutive days with at least one completed session
+        streak = 0
+        check = today
+        while True:
+            ds = check.isoformat()
+            cnt = await _fetchval(conn,
+                "SELECT COUNT(*) FROM sessions WHERE client_id=%s AND status='completed' AND session_date=%s",
+                client_id, ds) or 0
+            if cnt > 0:
+                streak += 1
+                check -= timedelta(days=1)
+            else:
+                break
+
+    return {
+        "streak_days": streak,
+        "total_sessions": total_sessions,
+        "weight_start": float(ws_row["weight_kg"]) if ws_row else None,
+        "weight_current": float(wc_row["weight_kg"]) if wc_row else None,
+        "best_pr_kg": float(pr_row["weight_kg"]) if pr_row else None,
+        "best_pr_exercise": pr_row["exercise_name"] if pr_row else None,
+        "week_done": week_done,
+        "week_planned": week_planned,
+    }
+
+
 async def get_client_schedule(client_id: int, date: str) -> list:
     pool = await get_pool()
     async with pool.connection() as conn:

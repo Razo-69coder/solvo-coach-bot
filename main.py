@@ -31,6 +31,7 @@ from database import (
     save_cycle_start, get_cycle_phase,
     save_pr, get_pr_list, get_pr_history,
     get_client_weekly_report,
+    get_client_progress_summary,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -539,6 +540,15 @@ async def client_weekly_report(
 ):
     return await get_client_weekly_report(
         current["client_id"], current["trainer_id"], week_offset
+    )
+
+
+# ─── Progress Summary ────────────────────────────────────────
+
+@app.get("/api/v1/client/progress-summary")
+async def client_progress_summary(current: dict = Depends(get_current_client)):
+    return await get_client_progress_summary(
+        current["client_id"], current["trainer_id"]
     )
 
 
