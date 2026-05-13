@@ -80,3 +80,15 @@ class WorkoutProgramRequest(BaseModel):
 
 class ClientLoginRequest(BaseModel):
     pin_code: str
+
+
+class CycleRequest(BaseModel):
+    cycle_start_date: str
+    cycle_length_days: int = 28
+
+
+class PRRequest(BaseModel):
+    exercise_name: str
+    weight_kg: float
+    reps: int
+    recorded_at: str

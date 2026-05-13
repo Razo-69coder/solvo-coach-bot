@@ -28,6 +28,9 @@ from database import (
     get_workout_program, save_workout_program,
     generate_client_pin, get_client_by_pin, get_client_schedule,
     get_client_analytics,
+    save_cycle_start, get_cycle_phase,
+    save_pr, get_pr_list, get_pr_history,
+    get_client_weekly_report,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -36,6 +39,8 @@ from models import (
     SubscriptionCreateRequest, PaymentCreateRequest,
     ClientBodyRequest, WorkoutProgramRequest,
     ClientLoginRequest,
+    CycleRequest,
+    PRRequest,
 )
 
 load_dotenv()
@@ -482,6 +487,59 @@ async def client_body(current: dict = Depends(get_current_client)):
 async def client_body_history(current: dict = Depends(get_current_client)):
     history = await get_client_body_history(current["client_id"])
     return {"history": history}
+
+
+# ─── Cycle Tracker ─────────────────────────────────────────
+
+@app.post("/api/v1/client/cycle")
+async def post_client_cycle(body: CycleRequest, current: dict = Depends(get_current_client)):
+    await save_cycle_start(current["client_id"], current["trainer_id"], body.cycle_start_date, body.cycle_length_days)
+    return {"message": "ok"}
+
+
+@app.get("/api/v1/client/cycle")
+async def get_my_cycle(current: dict = Depends(get_current_client)):
+    return await get_cycle_phase(current["client_id"])
+
+
+@app.get("/api/v1/clients/{client_id}/cycle")
+async def get_client_cycle(client_id: int, trainer_id: int = Depends(get_current_trainer_id)):
+    return await get_cycle_phase(client_id)
+
+
+# ─── PR Records ─────────────────────────────────────────────
+
+@app.post("/api/v1/client/pr")
+async def add_pr(body: PRRequest, current: dict = Depends(get_current_client)):
+    await save_pr(current["client_id"], current["trainer_id"], body.exercise_name, body.weight_kg, body.reps, body.recorded_at)
+    return {"message": "ok"}
+
+
+@app.get("/api/v1/client/pr")
+async def get_my_prs(current: dict = Depends(get_current_client)):
+    return await get_pr_list(current["client_id"])
+
+
+@app.get("/api/v1/client/pr/{exercise_name}/history")
+async def get_pr_history_route(exercise_name: str, current: dict = Depends(get_current_client)):
+    return await get_pr_history(current["client_id"], exercise_name)
+
+
+@app.get("/api/v1/clients/{client_id}/pr")
+async def get_client_prs(client_id: int, trainer_id: int = Depends(get_current_trainer_id)):
+    return await get_pr_list(client_id)
+
+
+# ─── Weekly Report ───────────────────────────────────────────
+
+@app.get("/api/v1/client/weekly-report")
+async def client_weekly_report(
+    week_offset: int = Query(0),
+    current: dict = Depends(get_current_client),
+):
+    return await get_client_weekly_report(
+        current["client_id"], current["trainer_id"], week_offset
+    )
 
 
 # ─── Health ───────────────────────────────────────────────

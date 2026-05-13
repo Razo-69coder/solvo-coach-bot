@@ -114,6 +114,28 @@ async def init_db():
             )
         """)
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS client_pr (
+                id SERIAL PRIMARY KEY,
+                client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+                trainer_id INTEGER NOT NULL,
+                exercise_name TEXT NOT NULL,
+                weight_kg REAL NOT NULL,
+                reps INTEGER NOT NULL,
+                recorded_at DATE DEFAULT CURRENT_DATE,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS client_cycle (
+                id SERIAL PRIMARY KEY,
+                client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+                trainer_id INTEGER NOT NULL,
+                cycle_start_date DATE NOT NULL,
+                cycle_length_days INTEGER DEFAULT 28,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS payments (
                 id SERIAL PRIMARY KEY,
                 trainer_id INTEGER NOT NULL REFERENCES trainers(id) ON DELETE CASCADE,
@@ -616,6 +638,137 @@ async def get_client_by_pin(pin: str) -> dict | None:
             JOIN clients c ON c.id = ca.client_id
             WHERE ca.pin_code = %s
         """, pin)
+
+
+# ─── PR Records ─────────────────────────────────────────────
+
+async def save_pr(client_id: int, trainer_id: int, exercise_name: str, weight_kg: float, reps: int, recorded_at: str) -> None:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await _execute(conn,
+            "INSERT INTO client_pr (client_id, trainer_id, exercise_name, weight_kg, reps, recorded_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            client_id, trainer_id, exercise_name, weight_kg, reps, recorded_at)
+
+
+async def get_pr_list(client_id: int) -> list:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        return await _fetch(conn, """
+            SELECT DISTINCT ON (exercise_name)
+                id, exercise_name, weight_kg, reps, recorded_at
+            FROM client_pr
+            WHERE client_id = %s
+            ORDER BY exercise_name, weight_kg DESC
+        """, client_id)
+
+
+async def get_pr_history(client_id: int, exercise_name: str) -> list:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        return await _fetch(conn, """
+            SELECT id, exercise_name, weight_kg, reps, recorded_at
+            FROM client_pr
+            WHERE client_id = %s AND exercise_name = %s
+            ORDER BY recorded_at ASC
+        """, client_id, exercise_name)
+
+
+# ─── Cycle Tracker ──────────────────────────────────────────
+
+async def save_cycle_start(client_id: int, trainer_id: int, cycle_start_date: str, cycle_length_days: int = 28) -> None:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await _execute(conn,
+            "INSERT INTO client_cycle (client_id, trainer_id, cycle_start_date, cycle_length_days) "
+            "VALUES (%s, %s, %s, %s)",
+            client_id, trainer_id, cycle_start_date, cycle_length_days)
+
+
+async def get_cycle_phase(client_id: int) -> dict:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        row = await _fetchrow(conn,
+            "SELECT cycle_start_date, cycle_length_days "
+            "FROM client_cycle WHERE client_id = %s "
+            "ORDER BY created_at DESC LIMIT 1", client_id)
+    if not row:
+        return {"phase": None, "label": None, "day": None, "hint": None}
+    from datetime import date
+    today = date.today()
+    start = row["cycle_start_date"]
+    length = row["cycle_length_days"]
+    day = (today - start).days % length + 1
+    if day <= 5:
+        phase = "menstruation"
+        label = "Менструация"
+        hint = "Снизить интенсивность, больше растяжки"
+    elif day <= 13:
+        phase = "follicular"
+        label = "Фолликулярная"
+        hint = "Хорошее время для силовых нагрузок"
+    elif day <= 16:
+        phase = "ovulation"
+        label = "Овуляция"
+        hint = "Пик формы — максимальная интенсивность"
+    else:
+        phase = "luteal"
+        label = "Лютеиновая"
+        hint = "Умеренная нагрузка, акцент на технику"
+    return {"phase": phase, "label": label, "day": day, "hint": hint}
+
+
+async def get_client_weekly_report(client_id: int, trainer_id: int, week_offset: int = 0) -> dict:
+    from datetime import date, timedelta
+    today = date.today()
+    monday = today - timedelta(days=today.weekday())
+    week_start = monday - timedelta(weeks=week_offset)
+    week_end = week_start + timedelta(days=6)
+    ws = week_start.isoformat()
+    we = week_end.isoformat()
+
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        sessions_done = await _fetchval(conn,
+            "SELECT COUNT(*) FROM sessions WHERE client_id=%s AND trainer_id=%s "
+            "AND status='completed' AND session_date>=%s AND session_date<=%s",
+            client_id, trainer_id, ws, we) or 0
+
+        sessions_planned = await _fetchval(conn,
+            "SELECT COUNT(*) FROM sessions WHERE client_id=%s AND trainer_id=%s "
+            "AND status NOT IN ('cancelled') AND session_date>=%s AND session_date<=%s",
+            client_id, trainer_id, ws, we) or 0
+
+        sessions_missed = await _fetchval(conn,
+            "SELECT COUNT(*) FROM sessions WHERE client_id=%s AND trainer_id=%s "
+            "AND status IN ('cancelled','no_show') AND session_date>=%s AND session_date<=%s",
+            client_id, trainer_id, ws, we) or 0
+
+        ws_row = await _fetchrow(conn,
+            "SELECT weight_kg FROM client_body WHERE client_id=%s AND measured_at<=%s "
+            "ORDER BY measured_at DESC LIMIT 1", client_id, ws)
+        weight_start = float(ws_row["weight_kg"]) if ws_row else None
+
+        we_row = await _fetchrow(conn,
+            "SELECT weight_kg FROM client_body WHERE client_id=%s AND measured_at>=%s AND measured_at<=%s "
+            "ORDER BY measured_at DESC LIMIT 1", client_id, ws, we)
+        weight_end = float(we_row["weight_kg"]) if we_row else (weight_start if weight_start else None)
+
+        new_prs = await _fetch(conn,
+            "SELECT id, exercise_name, weight_kg, reps, recorded_at "
+            "FROM client_pr WHERE client_id=%s AND recorded_at>=%s AND recorded_at<=%s "
+            "ORDER BY recorded_at ASC", client_id, ws, we)
+
+    return {
+        "week_start": ws,
+        "week_end": we,
+        "sessions_done": sessions_done,
+        "sessions_planned": sessions_planned,
+        "sessions_missed": sessions_missed,
+        "weight_start": weight_start,
+        "weight_end": weight_end,
+        "new_prs": new_prs,
+    }
 
 
 async def get_client_schedule(client_id: int, date: str) -> list:
