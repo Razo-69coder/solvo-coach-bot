@@ -120,3 +120,11 @@ class TemplateCreateRequest(BaseModel):
 
 class TemplateApplyRequest(BaseModel):
     client_id: int
+
+
+class OnboardingMetaRequest(BaseModel):
+    clients_count: str = ""
+    work_type: str = ""
+    experience: str = ""
+    current_tool: str = ""
+    referral_source: str = ""

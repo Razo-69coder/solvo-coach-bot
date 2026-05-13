@@ -46,6 +46,8 @@ from database import (
     get_trainer_tier,
     get_cal_ai_daily_count,
     save_cal_ai_log,
+    save_onboarding_meta,
+    parse_import_file,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -57,6 +59,7 @@ from models import (
     CycleRequest,
     PRRequest,
     TemplateCreateRequest,
+    OnboardingMetaRequest,
 )
 
 load_dotenv()
@@ -792,6 +795,26 @@ async def cal_ai_analyze(
     )
 
     return result
+
+
+# ─── Onboarding ────────────────────────────────────────────
+
+@app.post("/api/v1/trainer/onboarding-meta")
+async def save_onboarding_meta_endpoint(body: OnboardingMetaRequest):
+    await save_onboarding_meta(
+        body.clients_count, body.work_type,
+        body.experience, body.current_tool, body.referral_source
+    )
+    return {"ok": True, "message": "Метаданные онбординга сохранены"}
+
+
+# ─── Import Excel ─────────────────────────────────────────
+
+@app.post("/api/v1/import/excel")
+async def import_excel(file: UploadFile = File(...)):
+    data = await file.read()
+    clients, errors = await parse_import_file(data, file.filename or "file.csv")
+    return {"clients": clients, "total": len(clients), "errors": errors}
 
 
 # ─── Body Analysis ───────────────────────────────────────

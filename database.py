@@ -198,6 +198,17 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS trainer_meta (
+                id SERIAL PRIMARY KEY,
+                clients_count TEXT DEFAULT '',
+                work_type TEXT DEFAULT '',
+                experience TEXT DEFAULT '',
+                current_tool TEXT DEFAULT '',
+                referral_source TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
 
 
 async def _fetchrow(conn, sql, *args):
@@ -1112,3 +1123,84 @@ async def apply_template_to_client(template_id: int, client_id: int, trainer_id:
             client_id, trainer_id, title, content)
 
     return title
+
+
+# ─── Onboarding Meta ──────────────────────────────────────
+
+
+async def save_onboarding_meta(clients_count: str, work_type: str, experience: str,
+                                current_tool: str, referral_source: str):
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await _execute(conn,
+            "INSERT INTO trainer_meta (clients_count, work_type, experience, current_tool, referral_source) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            clients_count, work_type, experience, current_tool, referral_source)
+        return True
+
+
+# ─── Import Excel ──────────────────────────────────────────
+
+
+import io
+import csv
+
+async def parse_import_file(file_data: bytes, file_name: str) -> tuple[list[dict], list[str]]:
+    """Parse CSV or XLSX file and return list of {name, phone} and errors."""
+    results = []
+    errors = []
+
+    if file_name.endswith(".csv"):
+        text = file_data.decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(text))
+        found_cols = _find_cols(reader.fieldnames or [])
+        for row in reader:
+            parsed, err = _parse_row(row, found_cols)
+            if parsed:
+                results.append(parsed)
+            if err:
+                errors.append(err)
+
+    elif file_name.endswith(".xlsx"):
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(file_data), read_only=True)
+        ws = wb.active
+        if ws is None:
+            return results, ["Файл пуст"]
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return results, ["Файл пуст"]
+        headers = [str(c or "") for c in rows[0]]
+        found_cols = _find_cols(headers)
+        for row in rows[1:]:
+            row_dict = dict(zip(headers, [str(v or "") for v in row]))
+            parsed, err = _parse_row(row_dict, found_cols)
+            if parsed:
+                results.append(parsed)
+            if err:
+                errors.append(err)
+
+    return results, errors
+
+
+def _find_cols(headers: list[str]) -> dict:
+    name_keys = {"имя", "name", "клиент", "client", "фио", "fio"}
+    phone_keys = {"телефон", "phone", "номер", "number", "тел"}
+    found = {"name": None, "phone": None}
+    for h in headers:
+        hl = h.lower().strip()
+        if hl in name_keys and found["name"] is None:
+            found["name"] = h
+        if hl in phone_keys and found["phone"] is None:
+            found["phone"] = h
+    return found
+
+
+def _parse_row(row: dict, cols: dict) -> tuple[dict | None, str | None]:
+    name = row.get(cols["name"]) if cols["name"] else None
+    phone = row.get(cols["phone"]) if cols["phone"] else None
+    if not name and not phone:
+        return None, f"Строка без имени и телефона: {row}"
+    if not name:
+        return None, f"Строка без имени, телефон: {phone}"
+    return {"name": name.strip(), "phone": (phone or "").strip()}, None
