@@ -49,6 +49,7 @@ from database import (
     save_onboarding_meta,
     parse_import_file,
     get_churn_risk,
+    get_client_profitability,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -231,6 +232,11 @@ async def get_my_stats(trainer_id: int = Depends(get_current_trainer_id)):  # ty
 async def churn_risk(trainer_id: int = Depends(get_current_trainer_id)):  # type: ignore
     clients = await get_churn_risk(trainer_id)
     return {"clients": clients}
+
+
+@app.get("/api/v1/trainer/client-profitability")
+async def client_profitability(trainer_id: int = Depends(get_current_trainer_id)):
+    return {"clients": await get_client_profitability(trainer_id)}
 
 
 # ─── Clients ──────────────────────────────────────────────

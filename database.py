@@ -1161,6 +1161,53 @@ async def get_churn_risk(trainer_id: int) -> list[dict]:
         return result
 
 
+# ─── Client Profitability ────────────────────────────────
+
+
+async def get_client_profitability(trainer_id: int) -> list[dict]:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        rows = await _fetch(conn, """
+            SELECT
+                c.id AS client_id,
+                c.name,
+                COALESCE(SUM(CASE WHEN p.is_paid THEN p.amount ELSE 0 END), 0) AS total_revenue,
+                COALESCE(SUM(CASE WHEN s.status = 'completed' THEN 1 ELSE 0 END), 0) AS sessions_done,
+                COUNT(s.id) AS sessions_planned,
+                PERCENT_RANK() OVER (ORDER BY COALESCE(SUM(CASE WHEN p.is_paid THEN p.amount ELSE 0 END), 0) DESC) AS revenue_rank
+            FROM clients c
+            LEFT JOIN sessions s ON c.id = s.client_id
+            LEFT JOIN payments p ON c.id = p.client_id
+            WHERE c.trainer_id = %s
+            GROUP BY c.id, c.name
+            ORDER BY total_revenue DESC
+        """, trainer_id)
+        result = []
+        for r in rows:
+            done = r["sessions_done"]
+            planned = r["sessions_planned"]
+            revenue = r["total_revenue"]
+            attendance_pct = round(done / planned * 100, 1) if planned > 0 else 0.0
+            revenue_per_session = round(revenue / done, 0) if done > 0 else 0
+            if r["revenue_rank"] <= 0.2:
+                tier = "top"
+            elif attendance_pct < 50:
+                tier = "low"
+            else:
+                tier = "normal"
+            result.append({
+                "client_id": r["client_id"],
+                "name": r["name"],
+                "total_revenue": revenue,
+                "sessions_done": done,
+                "sessions_planned": planned,
+                "attendance_pct": attendance_pct,
+                "revenue_per_session": int(revenue_per_session),
+                "tier": tier,
+            })
+        return result
+
+
 # ─── Onboarding Meta ──────────────────────────────────────
 
 
