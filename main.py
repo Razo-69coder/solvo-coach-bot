@@ -1,4 +1,6 @@
 import os
+import json
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
@@ -8,7 +10,8 @@ import hashlib
 import hmac
 import os as _os
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Query, Depends
+import base64
+from fastapi import FastAPI, Header, HTTPException, Query, Depends, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
@@ -40,6 +43,9 @@ from database import (
     create_template,
     delete_template,
     apply_template_to_client,
+    get_trainer_tier,
+    get_cal_ai_daily_count,
+    save_cal_ai_log,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -58,6 +64,7 @@ load_dotenv()
 JWT_SECRET = os.getenv("JWT_SECRET", "sc_secret_fallback")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 
 # ─── Lifespan ─────────────────────────────────────────────
@@ -645,6 +652,146 @@ async def apply_template_endpoint(
         return {"message": f"Программа '{title}' применена к клиенту", "ok": True}
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+# ─── Cal AI ──────────────────────────────────────────────
+
+MOCK_CAL_AI_RESPONSE = {
+    "calories": 350,
+    "protein": 28.5,
+    "fat": 12.0,
+    "carbs": 31.0,
+    "dish_name": "Куриное филе с гречкой",
+    "confidence": "высокая",
+    "note": "Демо-режим",
+}
+
+CLAUDE_PROMPT_TEMPLATE = (
+    "Ты нутрициолог. Проанализируй фото еды и определи КБЖУ.\n"
+    "Данные от пользователя: блюдо={dish_type}, приготовление={cooking_method}, "
+    "соус={sauce}, размер порции={portion_size}.\n"
+    "Верни JSON: {{\"calories\": int, \"protein\": float, \"fat\": float, "
+    "\"carbs\": float, \"dish_name\": string, "
+    "\"confidence\": \"высокая/средняя/низкая\", \"note\": string}}\n"
+    "Если не уверен — укажи confidence=низкая и объясни в note."
+)
+
+
+async def call_claude_vision(photo_base64: str, prompt: str) -> dict | None:
+    if not ANTHROPIC_API_KEY:
+        return None
+    body = {
+        "model": "claude-3-5-haiku-20241022",
+        "max_tokens": 1024,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": photo_base64,
+                }},
+                {"type": "text", "text": prompt},
+            ],
+        }],
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=body,
+        )
+    if resp.status_code != 200:
+        return None
+    data = resp.json()
+    content = data.get("content", [])
+    for block in content:
+        if block.get("type") == "text":
+            text = block["text"].strip()
+            m = re.search(r"\{.*\}", text, re.DOTALL)
+            if m:
+                try:
+                    return json.loads(m.group())
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def _get_cal_ai_user(authorization: str) -> dict:
+    """Parse JWT and return {user_id, user_role, trainer_id}."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Требуется авторизация")
+    payload = decode_jwt(authorization[7:])
+    if not payload:
+        raise HTTPException(401, "Неверный токен")
+    role = payload.get("role", "trainer")
+    if role == "client":
+        return {
+            "user_id": int(payload["cid"]),
+            "user_role": "client",
+            "trainer_id": int(payload["tid"]),
+        }
+    return {
+        "user_id": int(payload["tid"]),
+        "user_role": "trainer",
+        "trainer_id": int(payload["tid"]),
+    }
+
+
+@app.post("/api/v1/cal-ai/analyze")
+async def cal_ai_analyze(
+    photo: UploadFile = File(...),
+    dish_type: str = Form(...),
+    cooking_method: str = Form(...),
+    sauce: str = Form(...),
+    portion_size: str = Form(...),
+    authorization: str = Header(None),
+):
+    user = _get_cal_ai_user(authorization)
+    tier = await get_trainer_tier(user["trainer_id"])
+
+    if user["user_role"] == "client":
+        if tier < 2:
+            raise HTTPException(403, "Cal AI недоступен на вашем тарифе")
+        daily = await get_cal_ai_daily_count(user["user_id"])
+        if tier == 2 and daily >= 5:
+            raise HTTPException(429, "Дневной лимит 5 запросов исчерпан")
+
+    photo_data = await photo.read()
+    photo_base64 = base64.b64encode(photo_data).decode()
+
+    prompt = CLAUDE_PROMPT_TEMPLATE.format(
+        dish_type=dish_type,
+        cooking_method=cooking_method,
+        sauce=sauce,
+        portion_size=portion_size,
+    )
+
+    result = await call_claude_vision(photo_base64, prompt)
+    if result is None:
+        result = dict(MOCK_CAL_AI_RESPONSE)
+        if ANTHROPIC_API_KEY:
+            result["note"] = "Ошибка анализа, использована заглушка"
+
+    request_data = {
+        "dish_type": dish_type,
+        "cooking_method": cooking_method,
+        "sauce": sauce,
+        "portion_size": portion_size,
+    }
+    await save_cal_ai_log(
+        user_id=user["user_id"],
+        user_role=user["user_role"],
+        trainer_id=user["trainer_id"],
+        request_data=request_data,
+        result=result,
+    )
+
+    return result
 
 
 # ─── Health ───────────────────────────────────────────────

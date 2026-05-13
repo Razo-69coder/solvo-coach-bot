@@ -179,6 +179,25 @@ async def init_db():
                 exercises JSONB DEFAULT '[]'::jsonb
             )
         """)
+        await conn.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='trainers' AND column_name='tier') THEN
+                    ALTER TABLE trainers ADD COLUMN tier INTEGER DEFAULT 1;
+                END IF;
+            END $$;
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS cal_ai_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                user_role VARCHAR(20) NOT NULL,
+                trainer_id INTEGER REFERENCES trainers(id) ON DELETE CASCADE,
+                request_data JSONB,
+                result JSONB,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
 
 
 async def _fetchrow(conn, sql, *args):
@@ -952,6 +971,37 @@ async def get_client_rank(client_id: int, trainer_id: int, month: str) -> dict:
         "sessions_count": my_sessions,
         "sessions_to_next": sessions_to_next,
     }
+
+
+# ─── Cal AI ────────────────────────────────────────────────
+
+async def get_trainer_tier(trainer_id: int) -> int:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        val = await _fetchval(conn, "SELECT tier FROM trainers WHERE id=%s", trainer_id)
+    return val or 1
+
+
+async def get_cal_ai_daily_count(client_id: int) -> int:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        val = await _fetchval(conn,
+            "SELECT COUNT(*) FROM cal_ai_logs "
+            "WHERE user_id=%s AND user_role='client' AND created_at::date=CURRENT_DATE",
+            client_id)
+    return val or 0
+
+
+async def save_cal_ai_log(user_id: int, user_role: str, trainer_id: int,
+                          request_data: dict, result: dict) -> None:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await _execute(conn,
+            "INSERT INTO cal_ai_logs (user_id, user_role, trainer_id, request_data, result) "
+            "VALUES (%s, %s, %s, %s::jsonb, %s::jsonb)",
+            user_id, user_role, trainer_id,
+            json.dumps(request_data, ensure_ascii=False),
+            json.dumps(result, ensure_ascii=False))
 
 
 async def get_client_schedule(client_id: int, date: str) -> list:
