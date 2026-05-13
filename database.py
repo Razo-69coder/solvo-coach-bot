@@ -1,5 +1,7 @@
 import os
 import json
+import io
+import csv
 from dotenv import load_dotenv
 from typing import Optional
 from psycopg import AsyncConnection
@@ -1175,9 +1177,6 @@ async def save_onboarding_meta(clients_count: str, work_type: str, experience: s
 
 # ─── Import Excel ──────────────────────────────────────────
 
-
-import io
-import csv
 
 async def parse_import_file(file_data: bytes, file_name: str) -> tuple[list[dict], list[str]]:
     """Parse CSV or XLSX file and return list of {name, phone} and errors."""
