@@ -35,6 +35,11 @@ from database import (
     get_muscle_map,
     get_leaderboard,
     get_client_rank,
+    get_templates,
+    get_template_detail,
+    create_template,
+    delete_template,
+    apply_template_to_client,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -45,6 +50,7 @@ from models import (
     ClientLoginRequest,
     CycleRequest,
     PRRequest,
+    TemplateCreateRequest,
 )
 
 load_dotenv()
@@ -581,6 +587,64 @@ async def client_my_rank(
     current: dict = Depends(get_current_client),
 ):
     return await get_client_rank(current["client_id"], current["trainer_id"], month)
+
+
+# ─── Program Templates ─────────────────────────────────────
+
+@app.post("/api/v1/trainer/templates", status_code=201)
+async def create_template_endpoint(
+    body: TemplateCreateRequest,
+    trainer_id: int = Depends(get_current_trainer_id),
+):
+    tid = await create_template(
+        trainer_id, body.name, body.description,
+        body.duration_weeks, body.level, body.goal,
+        [d.model_dump() for d in body.days]
+    )
+    return {"id": tid}
+
+
+@app.get("/api/v1/trainer/templates")
+async def list_templates(trainer_id: int = Depends(get_current_trainer_id)):
+    templates = await get_templates(trainer_id)
+    return {"templates": templates}
+
+
+@app.get("/api/v1/trainer/templates/{template_id}")
+async def get_template_endpoint(
+    template_id: int,
+    trainer_id: int = Depends(get_current_trainer_id),
+):
+    template = await get_template_detail(template_id)
+    if not template:
+        raise HTTPException(404, "Шаблон не найден")
+    if template["trainer_id"] != trainer_id:
+        raise HTTPException(403, "Нет доступа к этому шаблону")
+    return template
+
+
+@app.delete("/api/v1/trainer/templates/{template_id}")
+async def delete_template_endpoint(
+    template_id: int,
+    trainer_id: int = Depends(get_current_trainer_id),
+):
+    ok = await delete_template(template_id, trainer_id)
+    if not ok:
+        raise HTTPException(404, "Шаблон не найден")
+    return {"ok": True}
+
+
+@app.post("/api/v1/trainer/templates/{template_id}/apply/{client_id}")
+async def apply_template_endpoint(
+    template_id: int,
+    client_id: int,
+    trainer_id: int = Depends(get_current_trainer_id),
+):
+    try:
+        title = await apply_template_to_client(template_id, client_id, trainer_id)
+        return {"message": f"Программа '{title}' применена к клиенту", "ok": True}
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 # ─── Health ───────────────────────────────────────────────

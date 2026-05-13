@@ -92,3 +92,31 @@ class PRRequest(BaseModel):
     weight_kg: float
     reps: int
     recorded_at: str
+
+
+# ─── Program Templates ──────────────────────────────────────
+
+class TemplateExercise(BaseModel):
+    name: str
+    sets: int
+    reps: int
+    weight_note: str = ""
+
+
+class TemplateDayCreate(BaseModel):
+    day_number: int
+    name: str
+    exercises: list[TemplateExercise] = []
+
+
+class TemplateCreateRequest(BaseModel):
+    name: str
+    description: str = ""
+    duration_weeks: int = 4
+    level: str = "beginner"  # beginner/intermediate/advanced
+    goal: str = ""  # похудение/набор массы/рельеф/выносливость
+    days: list[TemplateDayCreate] = []
+
+
+class TemplateApplyRequest(BaseModel):
+    client_id: int

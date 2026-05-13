@@ -1,4 +1,5 @@
 import os
+import json
 from dotenv import load_dotenv
 from typing import Optional
 from psycopg import AsyncConnection
@@ -155,6 +156,27 @@ async def init_db():
                 payment_date TEXT NOT NULL,
                 is_paid BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS program_templates (
+                id SERIAL PRIMARY KEY,
+                trainer_id INTEGER REFERENCES trainers(id) ON DELETE CASCADE,
+                name VARCHAR(255) NOT NULL,
+                description TEXT DEFAULT '',
+                duration_weeks INTEGER DEFAULT 4,
+                level VARCHAR(50) DEFAULT 'beginner',
+                goal VARCHAR(100) DEFAULT '',
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS template_days (
+                id SERIAL PRIMARY KEY,
+                template_id INTEGER REFERENCES program_templates(id) ON DELETE CASCADE,
+                day_number INTEGER NOT NULL,
+                name VARCHAR(255) DEFAULT '',
+                exercises JSONB DEFAULT '[]'::jsonb
             )
         """)
 
@@ -942,3 +964,101 @@ async def get_client_schedule(client_id: int, date: str) -> list:
             WHERE s.client_id = %s AND s.session_date = %s
             ORDER BY s.time
         """, client_id, date)
+
+
+# ─── Program Templates ──────────────────────────────────────
+
+async def create_template(trainer_id: int, name: str, description: str,
+                           duration_weeks: int, level: str, goal: str,
+                           days: list) -> int:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        row = await _fetchrow(conn,
+            "INSERT INTO program_templates (trainer_id, name, description, duration_weeks, level, goal) "
+            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            trainer_id, name, description, duration_weeks, level, goal)
+        template_id = row["id"]
+        for d in days:
+            await _execute(conn,
+                "INSERT INTO template_days (template_id, day_number, name, exercises) "
+                "VALUES (%s, %s, %s, %s::jsonb)",
+                template_id, d["day_number"], d["name"],
+                json.dumps(d["exercises"], ensure_ascii=False))
+    return template_id
+
+
+async def get_templates(trainer_id: int) -> list:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        return await _fetch(conn,
+            "SELECT id, trainer_id, name, description, duration_weeks, level, goal, created_at "
+            "FROM program_templates WHERE trainer_id=%s ORDER BY created_at DESC",
+            trainer_id)
+
+
+async def get_template_detail(template_id: int) -> dict | None:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        template = await _fetchrow(conn,
+            "SELECT id, trainer_id, name, description, duration_weeks, level, goal, created_at "
+            "FROM program_templates WHERE id=%s", template_id)
+        if not template:
+            return None
+        days = await _fetch(conn,
+            "SELECT id, day_number, name, exercises "
+            "FROM template_days WHERE template_id=%s ORDER BY day_number",
+            template_id)
+        template["days"] = days
+        return template
+
+
+async def delete_template(template_id: int, trainer_id: int) -> bool:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        result = await _execute(conn,
+            "DELETE FROM program_templates WHERE id=%s AND trainer_id=%s",
+            template_id, trainer_id)
+    return "DELETE 1" in result
+
+
+async def apply_template_to_client(template_id: int, client_id: int, trainer_id: int) -> str:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        template = await _fetchrow(conn,
+            "SELECT name, description, duration_weeks, level, goal "
+            "FROM program_templates WHERE id=%s AND trainer_id=%s",
+            template_id, trainer_id)
+        if not template:
+            raise ValueError("Шаблон не найден")
+
+        client = await _fetchrow(conn,
+            "SELECT id FROM clients WHERE id=%s AND trainer_id=%s",
+            client_id, trainer_id)
+        if not client:
+            raise ValueError("Клиент не найден")
+
+        days = await _fetch(conn,
+            "SELECT day_number, name, exercises "
+            "FROM template_days WHERE template_id=%s ORDER BY day_number",
+            template_id)
+
+        content = f"Программа: {template['name']}\n"
+        content += f"Уровень: {template['level']}, Цель: {template['goal']}, "
+        content += f"Недель: {template['duration_weeks']}\n\n"
+        for d in days:
+            content += f"--- День {d['day_number']}: {d['name']} ---\n"
+            exercises = d["exercises"]
+            if isinstance(exercises, str):
+                exercises = json.loads(exercises)
+            for ex in exercises:
+                wn = f" ({ex.get('weight_note', '')})" if ex.get('weight_note') else ""
+                content += f"  {ex['name']}: {ex['sets']}x{ex['reps']}{wn}\n"
+            content += "\n"
+
+        title = template["name"]
+        await _execute(conn,
+            "INSERT INTO workout_programs (client_id, trainer_id, title, content) "
+            "VALUES (%s, %s, %s, %s)",
+            client_id, trainer_id, title, content)
+
+    return title
