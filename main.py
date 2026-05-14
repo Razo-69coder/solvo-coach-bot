@@ -76,6 +76,8 @@ JWT_SECRET = os.getenv("JWT_SECRET", "sc_secret_fallback")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+SUPPORT_BOT_TOKEN = os.getenv("SUPPORT_BOT_TOKEN", "")
+ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "550421233"))
 
 
 # ─── Lifespan ─────────────────────────────────────────────
@@ -731,22 +733,43 @@ async def apply_template_endpoint(
         raise HTTPException(404, str(e))
 
 
-# ─── Cal AI ──────────────────────────────────────────────
+# ─── Support ─────────────────────────────────────────────
 
-MOCK_CAL_AI_RESPONSE = {
-    "calories": 350,
-    "protein": 28.5,
-    "fat": 12.0,
-    "carbs": 31.0,
-    "dish_name": "Куриное филе с гречкой",
-    "confidence": "высокая",
-    "note": "Демо-режим",
-}
+async def send_support_message(text: str):
+    if not SUPPORT_BOT_TOKEN:
+        return
+    async with httpx.AsyncClient() as client:
+        try:
+            await client.post(
+                f"https://api.telegram.org/bot{SUPPORT_BOT_TOKEN}/sendMessage",
+                json={"chat_id": ADMIN_TG_ID, "text": text, "parse_mode": "Markdown"}
+            )
+        except Exception:
+            pass
+
+
+@app.post("/api/v1/support")
+async def support_message(body: dict, trainer_id: int = Depends(get_current_trainer_id)):
+    trainer = await get_trainer_by_id(trainer_id)
+    msg_type = body.get("type", "support")
+    message = body.get("message", "")
+    trainer_name = trainer.get("name", "Неизвестный") if trainer else "Неизвестный"
+    trainer_email = trainer.get("email", "") if trainer else ""
+
+    emoji = "🆘" if msg_type == "support" else "💡"
+    text = f"{emoji} *{'Поддержка' if msg_type == 'support' else 'Запрос функции'}*\n\n👤 {trainer_name} ({trainer_email})\n\n💬 {message}"
+
+    await send_support_message(text)
+    return {"ok": True}
+
+
+# ─── Cal AI ──────────────────────────────────────────────
 
 CLAUDE_PROMPT_TEMPLATE = (
     "Ты нутрициолог. Проанализируй фото еды и определи КБЖУ.\n"
-    "Данные от пользователя: блюдо={dish_type}, приготовление={cooking_method}, "
+    "Данные от пользователя: состав блюда={dish_type}, приготовление={cooking_method}, "
     "соус={sauce}, размер порции={portion_size}.\n"
+    "Если указан extra={extra}, учти это в анализе.\n"
     "Верни JSON: {{\"calories\": int, \"protein\": float, \"fat\": float, "
     "\"carbs\": float, \"dish_name\": string, "
     "\"confidence\": \"высокая/средняя/низкая\", \"note\": string}}\n"
@@ -754,9 +777,11 @@ CLAUDE_PROMPT_TEMPLATE = (
 )
 
 
-async def call_claude_vision(photo_base64: str, prompt: str) -> dict | None:
+async def call_claude_vision(photo_base64: str, prompt: str) -> dict:
+    print("ANTHROPIC_API_KEY present:", bool(os.getenv("ANTHROPIC_API_KEY")))
+    print("Image size:", len(photo_base64) if photo_base64 else 0)
     if not ANTHROPIC_API_KEY:
-        return None
+        raise HTTPException(500, "ANTHROPIC_API_KEY не настроен")
     body = {
         "model": "claude-3-5-haiku-20241022",
         "max_tokens": 1024,
@@ -783,7 +808,8 @@ async def call_claude_vision(photo_base64: str, prompt: str) -> dict | None:
             json=body,
         )
     if resp.status_code != 200:
-        return None
+        print("Claude response error:", resp.text)
+        raise HTTPException(502, f"Claude API error: {resp.status_code} {resp.text}")
     data = resp.json()
     content = data.get("content", [])
     for block in content:
@@ -793,9 +819,9 @@ async def call_claude_vision(photo_base64: str, prompt: str) -> dict | None:
             if m:
                 try:
                     return json.loads(m.group())
-                except json.JSONDecodeError:
-                    return None
-    return None
+                except json.JSONDecodeError as e:
+                    raise HTTPException(502, f"Не удалось распарсить ответ Claude: {e}")
+    raise HTTPException(502, "Claude не вернул текстовый ответ")
 
 
 def _get_cal_ai_user(authorization: str) -> dict:
@@ -826,6 +852,7 @@ async def cal_ai_analyze(
     cooking_method: str = Form(...),
     sauce: str = Form(...),
     portion_size: str = Form(...),
+    extra: str = Form(""),
     authorization: str = Header(None),
 ):
     user = _get_cal_ai_user(authorization)
@@ -839,6 +866,7 @@ async def cal_ai_analyze(
             raise HTTPException(429, "Дневной лимит 5 запросов исчерпан")
 
     photo_data = await photo.read()
+    print("Image received, size:", len(photo_data) if photo_data else 0)
     photo_base64 = base64.b64encode(photo_data).decode()
 
     prompt = CLAUDE_PROMPT_TEMPLATE.format(
@@ -846,19 +874,17 @@ async def cal_ai_analyze(
         cooking_method=cooking_method,
         sauce=sauce,
         portion_size=portion_size,
+        extra=extra,
     )
 
     result = await call_claude_vision(photo_base64, prompt)
-    if result is None:
-        result = dict(MOCK_CAL_AI_RESPONSE)
-        if ANTHROPIC_API_KEY:
-            result["note"] = "Ошибка анализа, использована заглушка"
 
     request_data = {
         "dish_type": dish_type,
         "cooking_method": cooking_method,
         "sauce": sauce,
         "portion_size": portion_size,
+        "extra": extra,
     }
     await save_cal_ai_log(
         user_id=user["user_id"],
