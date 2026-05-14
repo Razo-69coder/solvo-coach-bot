@@ -211,6 +211,18 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS supplements (
+                id SERIAL PRIMARY KEY,
+                client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+                name VARCHAR(255) NOT NULL,
+                dose VARCHAR(100) DEFAULT '',
+                time_of_day VARCHAR(50) NOT NULL,
+                notes TEXT DEFAULT '',
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
 
 
 async def _fetchrow(conn, sql, *args):
@@ -1284,3 +1296,44 @@ def _parse_row(row: dict, cols: dict) -> tuple[dict | None, str | None]:
     if not name:
         return None, f"Строка без имени, телефон: {phone}"
     return {"name": name.strip(), "phone": (phone or "").strip()}, None
+
+
+# ─── Supplements ──────────────────────────────────────
+
+
+async def get_supplements(client_id: int) -> list[dict]:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        return await _fetch(conn,
+            "SELECT id, client_id, name, dose, time_of_day, notes, is_active "
+            "FROM supplements WHERE client_id=%s ORDER BY time_of_day, id",
+            client_id)
+
+
+async def create_supplement(client_id: int, name: str, dose: str,
+                            time_of_day: str, notes: str) -> int:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        row = await _fetchrow(conn,
+            "INSERT INTO supplements (client_id, name, dose, time_of_day, notes) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            client_id, name, dose, time_of_day, notes)
+        return row["id"] if row else 0
+
+
+async def update_supplement(supplement_id: int, name: str, dose: str,
+                            time_of_day: str, notes: str) -> bool:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        result = await _execute(conn,
+            "UPDATE supplements SET name=%s, dose=%s, time_of_day=%s, notes=%s "
+            "WHERE id=%s",
+            name, dose, time_of_day, notes, supplement_id)
+        return "UPDATE 1" in result
+
+
+async def delete_supplement(supplement_id: int) -> bool:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        result = await _execute(conn, "DELETE FROM supplements WHERE id=%s", supplement_id)
+        return "DELETE 1" in result

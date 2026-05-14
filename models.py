@@ -128,3 +128,17 @@ class OnboardingMetaRequest(BaseModel):
     experience: str = ""
     current_tool: str = ""
     referral_source: str = ""
+
+
+class SupplementCreateRequest(BaseModel):
+    name: str
+    dose: str = ""
+    time_of_day: str
+    notes: str = ""
+
+
+class SupplementUpdateRequest(BaseModel):
+    name: str
+    dose: str = ""
+    time_of_day: str
+    notes: str = ""
