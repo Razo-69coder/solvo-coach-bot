@@ -783,7 +783,7 @@ async def call_claude_vision(photo_base64: str, prompt: str) -> dict:
     if not ANTHROPIC_API_KEY:
         raise HTTPException(500, "ANTHROPIC_API_KEY не настроен")
     body = {
-        "model": "claude-3-5-haiku-20241022",
+        "model": "claude-haiku-4-5-20251001",
         "max_tokens": 1024,
         "messages": [{
             "role": "user",
@@ -1041,57 +1041,63 @@ async def call_claude_vision_opus(
     photo_base64_side: str | None,
     prompt: str,
 ) -> dict | None:
+    print("Body Analysis called, front photo:", bool(photo_base64_front), "side:", bool(photo_base64_side))
     if not ANTHROPIC_API_KEY:
         return None
-    content = []
-    if photo_base64_front:
-        content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/jpeg",
-                "data": photo_base64_front,
-            },
-        })
-    if photo_base64_side:
-        content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/jpeg",
-                "data": photo_base64_side,
-            },
-        })
-    content.append({"type": "text", "text": prompt})
+    try:
+        content = []
+        if photo_base64_front:
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": photo_base64_front,
+                },
+            })
+        if photo_base64_side:
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": photo_base64_side,
+                },
+            })
+        content.append({"type": "text", "text": prompt})
 
-    body = {
-        "model": "claude-sonnet-4-6",
-        "max_tokens": 2048,
-        "messages": [{"role": "user", "content": content}],
-    }
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json=body,
-        )
-    if resp.status_code != 200:
+        body = {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 2048,
+            "messages": [{"role": "user", "content": content}],
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json=body,
+            )
+        if resp.status_code != 200:
+            print("Body Analysis Claude error:", resp.status_code, (resp.text[:500] if resp.text else ""))
+            return None
+        data = resp.json()
+        for block in data.get("content", []):
+            if block.get("type") == "text":
+                text = block["text"].strip()
+                m = re.search(r"\{.*\}", text, re.DOTALL)
+                if m:
+                    try:
+                        return json.loads(m.group())
+                    except json.JSONDecodeError:
+                        return None
         return None
-    data = resp.json()
-    for block in data.get("content", []):
-        if block.get("type") == "text":
-            text = block["text"].strip()
-            m = re.search(r"\{.*\}", text, re.DOTALL)
-            if m:
-                try:
-                    return json.loads(m.group())
-                except json.JSONDecodeError:
-                    return None
-    return None
+    except Exception as e:
+        print("Body Analysis exception:", str(e))
+        return None
 
 
 # ─── Health ───────────────────────────────────────────────
