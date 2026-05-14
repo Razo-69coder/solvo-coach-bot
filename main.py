@@ -184,14 +184,19 @@ def _verify_password(password: str, stored_hash: str) -> bool:
 
 @app.post("/api/v1/auth/register")
 async def register(body: TrainerRegisterRequest):
-    existing = await get_trainer_by_email(body.email)
+    email = body.email.strip().lower()
+    print(f"[REGISTER] Email: {email}, Name: {body.name}, Phone: {body.phone}")
+
+    existing = await get_trainer_by_email(email)
+    print(f"[REGISTER] Existing check: {existing}")
     if existing:
         raise HTTPException(400, "Email уже занят")
 
     salt = _os.urandom(16).hex()
     password_hash = salt + ":" + hashlib.pbkdf2_hmac("sha256", body.password.encode(), salt.encode(), 260000).hex()
-    trainer_id = await create_trainer(body.email, password_hash, body.name, body.phone)
+    trainer_id = await create_trainer(email, password_hash, body.name, body.phone)
     trainer = await get_trainer_by_id(trainer_id)
+    print(f"[REGISTER] Created trainer: {trainer_id}, Trainer: {trainer}")
     if not trainer:
         raise HTTPException(500, "Ошибка создания тренера")
 
@@ -201,7 +206,9 @@ async def register(body: TrainerRegisterRequest):
 
 @app.post("/api/v1/auth/login")
 async def login(body: TrainerLoginRequest):
-    trainer = await get_trainer_by_email(body.email)
+    email = body.email.strip().lower()
+    print(f"[LOGIN] Email: {email}")
+    trainer = await get_trainer_by_email(email)
     if not trainer or not _verify_password(body.password, trainer["password_hash"]):
         raise HTTPException(401, "Неверный email или пароль")
 
