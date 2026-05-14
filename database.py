@@ -18,7 +18,7 @@ async def get_pool() -> AsyncConnectionPool:
     global _pool
     if _pool is None:
         _pool = AsyncConnectionPool(DATABASE_URL, min_size=0, max_size=3, open=False, reconnect_timeout=60)
-        await _pool.open()
+        await _pool.open(wait=False)
     return _pool
 
 
@@ -26,17 +26,19 @@ import asyncio
 
 async def init_db():
     pool = await get_pool()
-    for attempt in range(5):
+    connected = False
+    for attempt in range(10):
         try:
             async with pool.connection() as conn:
                 await conn.execute("SELECT 1")
+            connected = True
             break
         except Exception as e:
-            print(f"DB connection attempt {attempt+1}/5 failed: {e}")
-            if attempt < 4:
-                await asyncio.sleep(5)
-            else:
-                raise
+            print(f"DB connection attempt {attempt+1}/10 failed: {e}")
+            if attempt < 9:
+                await asyncio.sleep(10)
+    if not connected:
+        print("WARNING: DB not reachable at startup, continuing anyway (tables already exist)")
     async with pool.connection() as conn:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS trainers (

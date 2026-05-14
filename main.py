@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
@@ -84,7 +85,12 @@ ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "550421233"))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
+    try:
+        await asyncio.wait_for(init_db(), timeout=120)
+    except asyncio.TimeoutError:
+        print("WARNING: init_db timed out after 120s, starting anyway")
+    except Exception as e:
+        print(f"WARNING: init_db failed: {e}, starting anyway")
     yield
 
 
