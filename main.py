@@ -55,6 +55,9 @@ from database import (
     create_supplement,
     update_supplement,
     delete_supplement,
+    get_cal_ai_history,
+    save_body_analysis,
+    get_body_analysis_history,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -788,17 +791,20 @@ async def support_message(body: dict, trainer_id: int = Depends(get_current_trai
 
 CLAUDE_PROMPT_TEMPLATE = (
     "Ты эксперт-нутрициолог. Проанализируй фото еды по шагам:\n\n"
-    "ШАГ 1 — Ингредиенты: перечисли каждый видимый ингредиент отдельно.\n"
-    "ШАГ 2 — Вес: оцени граммы каждого ингредиента по размеру тарелки/порции на фото. "
-    "Для супов, тушёных блюд, карри, чили — помни: 60-80% объёма это вода/бульон, не переоценивай.\n"
-    "ШАГ 3 — КБЖУ: рассчитай итоговые калории/белки/жиры/углеводы по справочным данным (USDA).\n\n"
+    "ШАГ 1 — Ингредиенты: перечисли каждый видимый ингредиент отдельно, включая хлеб, колбасу, сыр, масло и т.д.\n"
+    "ШАГ 2 — Вес: оцени граммы КАЖДОГО ингредиента отдельно по реальному размеру на фото. "
+    "ВАЖНО: считай штуки поштучно (1 бутерброд, 1 яйцо, 1 котлета). "
+    "Типичный вес: ломтик хлеба=25г, ломтик колбасы=15г, яйцо=50г, котлета=80г, куриная грудка=150г. "
+    "Для супов и тушёных блюд: 60-80% объёма — вода/бульон, твёрдых ингредиентов мало.\n"
+    "ШАГ 3 — КБЖУ: рассчитай итог по данным USDA для каждого ингредиента отдельно, затем сложи.\n\n"
     "Дополнительные данные от пользователя: "
-    "состав={dish_type}, приготовление={cooking_method}, соус={sauce}, "
+    "название блюда={dish_name_hint}, состав={dish_type}, приготовление={cooking_method}, соус={sauce}, "
     "размер порции={portion_size}.\n"
     "Если указан extra={extra}, учти в анализе.\n\n"
     "Верни ТОЛЬКО JSON без пояснений:\n"
     "{{\"calories\": int, \"protein\": float, \"fat\": float, \"carbs\": float, "
     "\"dish_name\": string, \"confidence\": \"высокая/средняя/низкая\", \"note\": string}}\n"
+    "В поле dish_name — название блюда (если указано пользователем — используй его точно). "
     "В поле note — кратко опиши из чего считал (1-2 предложения). "
     "Не завышай калории для густых/тёмных блюд — они выглядят плотнее, чем есть."
 )
@@ -880,6 +886,7 @@ async def cal_ai_analyze(
     sauce: str = Form(...),
     portion_size: str = Form(...),
     extra: str = Form(""),
+    dish_name_hint: str = Form(""),
     authorization: str = Header(None),
 ):
     user = _get_cal_ai_user(authorization)
@@ -899,6 +906,7 @@ async def cal_ai_analyze(
     photo_base64 = base64.b64encode(photo_data).decode()
 
     prompt = CLAUDE_PROMPT_TEMPLATE.format(
+        dish_name_hint=dish_name_hint or "не указано",
         dish_type=dish_type,
         cooking_method=cooking_method,
         sauce=sauce,
@@ -924,6 +932,13 @@ async def cal_ai_analyze(
     )
 
     return result
+
+
+@app.get("/api/v1/cal-ai/history")
+async def cal_ai_history(authorization: str = Header(None)):
+    user = _get_cal_ai_user(authorization)
+    items = await get_cal_ai_history(user["user_id"])
+    return {"items": items}
 
 
 # ─── Onboarding ────────────────────────────────────────────
@@ -1056,6 +1071,7 @@ async def body_analysis_analyze(
     level: str = Form(...),
     equipment: str = Form(...),
     limitations: str = Form(""),
+    client_id: int = Form(0),
     authorization: str = Header(None),
 ):
     user = _get_cal_ai_user(authorization)
@@ -1080,7 +1096,26 @@ async def body_analysis_analyze(
         if ANTHROPIC_API_KEY:
             result["note"] = "Ошибка анализа, использована заглушка"
 
+    await save_body_analysis(
+        trainer_id=user["trainer_id"],
+        client_id=client_id if client_id > 0 else None,
+        result=result,
+    )
+
     return result
+
+
+@app.get("/api/v1/body-analysis/history")
+async def body_analysis_history(
+    client_id: int = Query(0),
+    authorization: str = Header(None),
+):
+    trainer_id = await get_current_trainer_id(authorization)
+    items = await get_body_analysis_history(
+        trainer_id=trainer_id,
+        client_id=client_id if client_id > 0 else None,
+    )
+    return {"items": items}
 
 
 async def call_claude_vision_opus(

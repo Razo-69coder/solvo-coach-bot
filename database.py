@@ -225,6 +225,15 @@ async def init_db():
             )
         """)
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS body_analysis_history (
+                id SERIAL PRIMARY KEY,
+                trainer_id INTEGER REFERENCES trainers(id) ON DELETE CASCADE,
+                client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+                result JSONB NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS trainer_meta (
                 id SERIAL PRIMARY KEY,
                 clients_count TEXT DEFAULT '',
@@ -1051,6 +1060,67 @@ async def save_cal_ai_log(user_id: int, user_role: str, trainer_id: int,
             user_id, user_role, trainer_id,
             json.dumps(request_data, ensure_ascii=False),
             json.dumps(result, ensure_ascii=False))
+
+
+async def get_cal_ai_history(user_id: int, limit: int = 30) -> list:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        rows = await _fetch(conn,
+            "SELECT id, result, created_at FROM cal_ai_logs "
+            "WHERE user_id=%s ORDER BY created_at DESC LIMIT %s",
+            user_id, limit)
+        return [
+            {
+                "id": r["id"],
+                "dish_name": (r["result"] or {}).get("dish_name", ""),
+                "calories": (r["result"] or {}).get("calories", 0),
+                "protein": (r["result"] or {}).get("protein", 0),
+                "fat": (r["result"] or {}).get("fat", 0),
+                "carbs": (r["result"] or {}).get("carbs", 0),
+                "note": (r["result"] or {}).get("note", ""),
+                "confidence": (r["result"] or {}).get("confidence", ""),
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ]
+
+
+async def save_body_analysis(trainer_id: int, client_id: int | None, result: dict) -> int:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        row = await _fetchrow(conn,
+            "INSERT INTO body_analysis_history (trainer_id, client_id, result) "
+            "VALUES (%s, %s, %s::jsonb) RETURNING id",
+            trainer_id, client_id, json.dumps(result, ensure_ascii=False))
+        return row["id"] if row else 0
+
+
+async def get_body_analysis_history(trainer_id: int, client_id: int | None = None, limit: int = 20) -> list:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        if client_id:
+            rows = await _fetch(conn,
+                "SELECT h.id, h.client_id, c.name as client_name, h.result, h.created_at "
+                "FROM body_analysis_history h LEFT JOIN clients c ON c.id=h.client_id "
+                "WHERE h.trainer_id=%s AND h.client_id=%s ORDER BY h.created_at DESC LIMIT %s",
+                trainer_id, client_id, limit)
+        else:
+            rows = await _fetch(conn,
+                "SELECT h.id, h.client_id, c.name as client_name, h.result, h.created_at "
+                "FROM body_analysis_history h LEFT JOIN clients c ON c.id=h.client_id "
+                "WHERE h.trainer_id=%s ORDER BY h.created_at DESC LIMIT %s",
+                trainer_id, limit)
+        return [
+            {
+                "id": r["id"],
+                "client_id": r["client_id"],
+                "client_name": r["client_name"] or "Без клиента",
+                "body_analysis": (r["result"] or {}).get("body_analysis", ""),
+                "program": (r["result"] or {}).get("program", ""),
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            }
+            for r in rows
+        ]
 
 
 async def get_client_schedule(client_id: int, date: str) -> list:
