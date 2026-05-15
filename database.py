@@ -1060,6 +1060,7 @@ async def save_cal_ai_log(user_id: int, user_role: str, trainer_id: int,
             user_id, user_role, trainer_id,
             json.dumps(request_data, ensure_ascii=False),
             json.dumps(result, ensure_ascii=False))
+    print(f"[save_cal_ai_log] saved user_id={user_id} role={user_role}")
 
 
 async def get_cal_ai_history(user_id: int, limit: int = 30) -> list:
@@ -1092,7 +1093,9 @@ async def save_body_analysis(trainer_id: int, client_id: int | None, result: dic
             "INSERT INTO body_analysis_history (trainer_id, client_id, result) "
             "VALUES (%s, %s, %s::jsonb) RETURNING id",
             trainer_id, client_id, json.dumps(result, ensure_ascii=False))
-        return row["id"] if row else 0
+        row_id = row["id"] if row else None
+        print(f"[save_body_analysis] saved trainer_id={trainer_id} id={row_id}")
+        return row_id or 0
 
 
 async def get_body_analysis_history(trainer_id: int, client_id: int | None = None, limit: int = 20) -> list:

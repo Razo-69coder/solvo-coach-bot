@@ -958,6 +958,7 @@ async def cal_ai_analyze(
 async def cal_ai_history(authorization: str = Header(None)):
     user = _get_cal_ai_user(authorization)
     items = await get_cal_ai_history(user["user_id"])
+    print(f"[cal_ai_history] user_id={user['user_id']} items_count={len(items)}")
     return {"items": items}
 
 
@@ -1137,6 +1138,7 @@ async def body_analysis_history(
         trainer_id=trainer_id,
         client_id=client_id if client_id > 0 else None,
     )
+    print(f"[body_analysis_history] trainer_id={trainer_id} items_count={len(items)}")
     return {"items": items}
 
 
