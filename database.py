@@ -16,8 +16,16 @@ _pool: AsyncConnectionPool | None = None
 
 async def get_pool() -> AsyncConnectionPool:
     global _pool
-    if _pool is None:
-        _pool = AsyncConnectionPool(DATABASE_URL, min_size=0, max_size=3, open=False, reconnect_timeout=60)
+    if _pool is None or _pool.closed:
+        _pool = AsyncConnectionPool(
+            DATABASE_URL,
+            min_size=0,
+            max_size=3,
+            open=False,
+            reconnect_timeout=60,
+            timeout=60,
+            kwargs={"connect_timeout": 60},
+        )
         await _pool.open(wait=False)
     return _pool
 
@@ -39,6 +47,7 @@ async def init_db():
                 await asyncio.sleep(10)
     if not connected:
         print("WARNING: DB not reachable at startup, continuing anyway (tables already exist)")
+        return
     async with pool.connection() as conn:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS trainers (
