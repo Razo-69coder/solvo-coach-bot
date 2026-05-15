@@ -809,6 +809,23 @@ CLAUDE_PROMPT_TEMPLATE = (
     "Не завышай калории для густых/тёмных блюд — они выглядят плотнее, чем есть."
 )
 
+AUTO_CAL_AI_PROMPT = (
+    "You are a nutrition expert. Analyze this food photo and determine the nutritional content.\n\n"
+    "Look at the photo and independently determine:\n"
+    "- What dish it is\n"
+    "- Main ingredients (proteins, carbs, fats, vegetables)\n"
+    "- Cooking method\n"
+    "- Approximate portion weight visually\n\n"
+    "Respond ONLY with this JSON (no other text):\n"
+    "{{\"dish_name\": \"название блюда на русском\", "
+    "\"weight_g\": 300, \"calories\": 450, \"protein\": 35, \"fat\": 12, \"carbs\": 48, "
+    "\"fiber_g\": 3, "
+    "\"ingredients\": [\"ингредиент1\", \"ингредиент2\"], "
+    "\"cooking_method\": \"варёное/жареное/запечённое/тушёное\", "
+    "\"confidence\": \"high/medium/low\", "
+    "\"note\": \"краткий комментарий если нужен, иначе пустая строка\"}}"
+)
+
 
 async def call_claude_vision(photo_base64: str, prompt: str) -> dict:
     print("ANTHROPIC_API_KEY present:", bool(os.getenv("ANTHROPIC_API_KEY")))
@@ -905,14 +922,17 @@ async def cal_ai_analyze(
     print("Image received, size:", len(photo_data) if photo_data else 0)
     photo_base64 = base64.b64encode(photo_data).decode()
 
-    prompt = CLAUDE_PROMPT_TEMPLATE.format(
-        dish_name_hint=dish_name_hint or "не указано",
-        dish_type=dish_type,
-        cooking_method=cooking_method,
-        sauce=sauce,
-        portion_size=portion_size,
-        extra=extra,
-    )
+    if not dish_type or dish_type == "auto":
+        prompt = AUTO_CAL_AI_PROMPT
+    else:
+        prompt = CLAUDE_PROMPT_TEMPLATE.format(
+            dish_name_hint=dish_name_hint or "не указано",
+            dish_type=dish_type,
+            cooking_method=cooking_method,
+            sauce=sauce,
+            portion_size=portion_size,
+            extra=extra,
+        )
 
     result = await call_claude_vision(photo_base64, prompt)
 
@@ -1059,7 +1079,8 @@ BODY_ANALYSIS_PROMPT_TEMPLATE = (
     "{{\"body_analysis\": \"детальный анализ из шага 1 включая определённый пол (3-5 предложений)\", "
     "\"program\": \"логика из шага 2 с учётом пола (2-3 предложения)\", "
     "\"weeks\": [{{\"week\": int, \"days\": [{{\"day\": int, "
-    "\"exercises\": [{{\"name\": str, \"sets\": int, \"reps\": int, \"note\": str}}]}}]}}]}}"
+    "\"exercises\": [{{\"name\": str, \"sets\": int, \"reps\": int, \"note\": str}}]}}]}}]}}\n\n"
+    "Отвечай КРАТКО. Максимум 1500 токенов. Только JSON без лишних слов."
 )
 
 
@@ -1090,6 +1111,7 @@ async def body_analysis_analyze(
     result = None
     if ANTHROPIC_API_KEY:
         result = await call_claude_vision_opus(photo_base64_front, photo_base64_side, prompt)
+        print("Body Analysis result:", result is not None, str(result)[:200] if result else "None")
 
     if result is None:
         result = dict(MOCK_BODY_ANALYSIS_RESPONSE)
@@ -1149,11 +1171,11 @@ async def call_claude_vision_opus(
         content.append({"type": "text", "text": prompt})
 
         body = {
-            "model": "claude-sonnet-4-6",
-            "max_tokens": 4096,
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 2048,
             "messages": [{"role": "user", "content": content}],
         }
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=25) as client:
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
