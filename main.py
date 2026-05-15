@@ -889,8 +889,10 @@ async def cal_ai_analyze(
         if tier < 2:
             raise HTTPException(403, "Cal AI недоступен на вашем тарифе")
         daily = await get_cal_ai_daily_count(user["user_id"])
-        if tier == 2 and daily >= 5:
-            raise HTTPException(429, "Дневной лимит 5 запросов исчерпан")
+        if tier == 2 and daily >= 4:
+            raise HTTPException(429, "Дневной лимит 4 запроса исчерпан")
+        if tier >= 3 and daily >= 8:
+            raise HTTPException(429, "Дневной лимит 8 запросов исчерпан")
 
     photo_data = await photo.read()
     print("Image received, size:", len(photo_data) if photo_data else 0)
