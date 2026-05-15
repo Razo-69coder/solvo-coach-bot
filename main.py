@@ -83,6 +83,19 @@ ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "550421233"))
 
 # ─── Lifespan ─────────────────────────────────────────────
 
+async def _db_keepalive():
+    from database import get_pool
+    while True:
+        await asyncio.sleep(240)  # ping every 4 min (Neon suspends after 5 min idle)
+        try:
+            pool = await get_pool()
+            async with pool.connection() as conn:
+                await conn.execute("SELECT 1")
+            print("[KEEPALIVE] DB ping ok")
+        except Exception as e:
+            print(f"[KEEPALIVE] DB ping failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -91,7 +104,9 @@ async def lifespan(app: FastAPI):
         print("WARNING: init_db timed out after 120s, starting anyway")
     except Exception as e:
         print(f"WARNING: init_db failed: {e}, starting anyway")
+    task = asyncio.create_task(_db_keepalive())
     yield
+    task.cancel()
 
 
 app = FastAPI(title="Solvo Fit API", lifespan=lifespan)
