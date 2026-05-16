@@ -956,10 +956,16 @@ async def cal_ai_analyze(
 
 @app.get("/api/v1/cal-ai/history")
 async def cal_ai_history(authorization: str = Header(None)):
-    user = _get_cal_ai_user(authorization)
-    items = await get_cal_ai_history(user["user_id"])
-    print(f"[cal_ai_history] user_id={user['user_id']} items_count={len(items)}")
-    return {"items": items}
+    try:
+        user = _get_cal_ai_user(authorization)
+        items = await get_cal_ai_history(user["user_id"])
+        print(f"[cal_ai_history] user_id={user['user_id']} items_count={len(items)}")
+        return {"items": items}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[cal_ai_history] error: {e}")
+        raise HTTPException(500, "Внутренняя ошибка сервера")
 
 
 # ─── Onboarding ────────────────────────────────────────────
@@ -1133,13 +1139,19 @@ async def body_analysis_history(
     client_id: int = Query(0),
     authorization: str = Header(None),
 ):
-    trainer_id = await get_current_trainer_id(authorization)
-    items = await get_body_analysis_history(
-        trainer_id=trainer_id,
-        client_id=client_id if client_id > 0 else None,
-    )
-    print(f"[body_analysis_history] trainer_id={trainer_id} items_count={len(items)}")
-    return {"items": items}
+    try:
+        trainer_id = await get_current_trainer_id(authorization)
+        items = await get_body_analysis_history(
+            trainer_id=trainer_id,
+            client_id=client_id if client_id > 0 else None,
+        )
+        print(f"[body_analysis_history] trainer_id={trainer_id} items_count={len(items)}")
+        return {"items": items}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[body_analysis_history] error: {e}")
+        raise HTTPException(500, "Внутренняя ошибка сервера")
 
 
 async def call_claude_vision_opus(
