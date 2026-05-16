@@ -1120,6 +1120,7 @@ async def get_body_analysis_history(trainer_id: int, client_id: int | None = Non
                 "client_name": r["client_name"] or "Без клиента",
                 "body_analysis": (r["result"] or {}).get("body_analysis", ""),
                 "program": (r["result"] or {}).get("program", ""),
+                "weeks": (r["result"] or {}).get("weeks", []),
                 "created_at": r["created_at"].isoformat() if r["created_at"] else None,
             }
             for r in rows
