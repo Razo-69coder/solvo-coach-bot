@@ -1222,4 +1222,4 @@ async def call_claude_vision_opus(
 
 @app.get("/")
 async def root():
-    return {"ok": True, "app": "Solvo Fit API", "version": "1.0.0"}
+    return {"ok": True, "app": "Solvo Fit API", "version": "1.1.0", "build": "2026-05-16-history"}
