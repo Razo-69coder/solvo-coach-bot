@@ -796,6 +796,8 @@ CLAUDE_PROMPT_TEMPLATE = (
     "приготовление={cooking_method}, соус={sauce}, порция={portion_size}.\n"
     "Если указан вес порции={weight_g}г — это точный вес всего блюда, НЕ МЕНЯТЬ ни на грамм.\n"
     "Если указано количество (например '5 кусков курицы ~250г') — использовать ИМЕННО эти граммы.\n"
+    "Данные LiDAR (если есть): {lidar_data}. "
+    "Если LiDAR данные есть — используй диаметр тарелки для точного расчёта размера порции.\n"
     "Если extra={extra} — учти обязательно.\n\n"
     "ШАГ 2 — АНАЛИЗ ФОТО:\n"
     "- Используй тарелку/ладонь/столовые приборы на фото как ориентир размера\n"
@@ -907,6 +909,7 @@ async def cal_ai_analyze(
     extra: str = Form(""),
     dish_name_hint: str = Form(""),
     weight_g: str = Form(""),
+    lidar_data: str = Form(""),
     authorization: str = Header(None),
 ):
     user = _get_cal_ai_user(authorization)
@@ -936,6 +939,7 @@ async def cal_ai_analyze(
             portion_size=portion_size,
             extra=extra,
             weight_g=weight_g if weight_g else "не указан",
+            lidar_data=lidar_data if lidar_data else "нет",
         )
 
     result = await call_claude_vision(photo_base64, prompt)
