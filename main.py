@@ -791,39 +791,41 @@ async def support_message(body: dict, trainer_id: int = Depends(get_current_trai
 
 CLAUDE_PROMPT_TEMPLATE = (
     "Ты эксперт-нутрициолог. Проанализируй фото еды по шагам:\n\n"
-    "ШАГ 1 — Ингредиенты: перечисли каждый видимый ингредиент отдельно, включая хлеб, колбасу, сыр, масло и т.д.\n"
-    "ШАГ 2 — Вес: оцени граммы КАЖДОГО ингредиента отдельно по реальному размеру на фото. "
-    "ВАЖНО: считай штуки поштучно (1 бутерброд, 1 яйцо, 1 котлета). "
-    "Типичный вес: ломтик хлеба=25г, ломтик колбасы=15г, яйцо=50г, котлета=80г, куриная грудка=150г. "
-    "Для супов и тушёных блюд: 60-80% объёма — вода/бульон, твёрдых ингредиентов мало.\n"
-    "ШАГ 3 — КБЖУ: рассчитай итог по данным USDA для каждого ингредиента отдельно, затем сложи.\n\n"
-    "Дополнительные данные от пользователя: "
-    "название блюда={dish_name_hint}, состав={dish_type}, приготовление={cooking_method}, соус={sauce}, "
-    "размер порции={portion_size}.\n"
-    "Если указан extra={extra}, учти в анализе.\n\n"
-    "Верни ТОЛЬКО JSON без пояснений:\n"
+    "ШАГ 1 — ПОЛЬЗОВАТЕЛЬСКИЕ ДАННЫЕ (АБСОЛЮТНЫЙ ПРИОРИТЕТ):\n"
+    "Пользователь указал: название={dish_name_hint}, состав={dish_type}, "
+    "приготовление={cooking_method}, соус={sauce}, порция={portion_size}.\n"
+    "Если указан вес порции={weight_g}г — это точный вес всего блюда, НЕ МЕНЯТЬ ни на грамм.\n"
+    "Если указано количество (например '5 кусков курицы ~250г') — использовать ИМЕННО эти граммы.\n"
+    "Если extra={extra} — учти обязательно.\n\n"
+    "ШАГ 2 — АНАЛИЗ ФОТО:\n"
+    "- Используй тарелку/ладонь/столовые приборы на фото как ориентир размера\n"
+    "- Стандартная тарелка = 24-26 см диаметром. Оцени какую часть тарелки занимает еда\n"
+    "- Если пользователь указал вес — используй его. Если нет — оцени по ориентирам на фото\n"
+    "- Ингредиенты: называй то что видишь, для овощей допустима небольшая неточность в названии "
+    "(помидор vs красный перец) — важнее точный вес\n\n"
+    "ШАГ 3 — КБЖУ по USDA:\n"
+    "Рассчитай КБЖУ для каждого ингредиента по весу, затем сложи итог.\n\n"
+    "Верни ТОЛЬКО JSON:\n"
     "{{\"calories\": int, \"protein\": float, \"fat\": float, \"carbs\": float, "
     "\"dish_name\": string, \"confidence\": \"высокая/средняя/низкая\", \"note\": string}}\n"
-    "В поле dish_name — название блюда (если указано пользователем — используй его точно). "
-    "В поле note — кратко опиши из чего считал (1-2 предложения). "
-    "Не завышай калории для густых/тёмных блюд — они выглядят плотнее, чем есть."
+    "В note — напиши из чего считал и какой вес взял за основу."
 )
 
 AUTO_CAL_AI_PROMPT = (
-    "You are a nutrition expert. Analyze this food photo and determine the nutritional content.\n\n"
-    "Look at the photo and independently determine:\n"
-    "- What dish it is\n"
-    "- Main ingredients (proteins, carbs, fats, vegetables)\n"
-    "- Cooking method\n"
-    "- Approximate portion weight visually\n\n"
-    "Respond ONLY with this JSON (no other text):\n"
-    "{{\"dish_name\": \"название блюда на русском\", "
-    "\"weight_g\": 300, \"calories\": 450, \"protein\": 35, \"fat\": 12, \"carbs\": 48, "
-    "\"fiber_g\": 3, "
-    "\"ingredients\": [\"ингредиент1\", \"ингредиент2\"], "
+    "You are a nutrition expert. Analyze this food photo carefully.\n\n"
+    "PORTION SIZE — use visual references on the plate:\n"
+    "- Standard plate diameter = 24-26 cm. Estimate what fraction of the plate the food occupies\n"
+    "- Use any visible reference objects (spoon, fork, hand) to estimate scale\n"
+    "- Count individual pieces if visible (e.g. '5 small chicken pieces ≈ 250g total')\n"
+    "- For soups/stews: 60-80% is liquid, estimate solids separately\n\n"
+    "Identify: dish name, all ingredients with individual weights, cooking method.\n\n"
+    "Respond ONLY with JSON:\n"
+    "{{\"dish_name\": \"название на русском\", \"weight_g\": int, \"calories\": int, "
+    "\"protein\": float, \"fat\": float, \"carbs\": float, \"fiber_g\": float, "
+    "\"ingredients\": [\"ingredient 100g\", \"ingredient2 150g\"], "
     "\"cooking_method\": \"варёное/жареное/запечённое/тушёное\", "
     "\"confidence\": \"high/medium/low\", "
-    "\"note\": \"краткий комментарий если нужен, иначе пустая строка\"}}"
+    "\"note\": \"как определил вес\"}}"
 )
 
 
@@ -904,6 +906,7 @@ async def cal_ai_analyze(
     portion_size: str = Form(...),
     extra: str = Form(""),
     dish_name_hint: str = Form(""),
+    weight_g: str = Form(""),
     authorization: str = Header(None),
 ):
     user = _get_cal_ai_user(authorization)
@@ -932,6 +935,7 @@ async def cal_ai_analyze(
             sauce=sauce,
             portion_size=portion_size,
             extra=extra,
+            weight_g=weight_g if weight_g else "не указан",
         )
 
     result = await call_claude_vision(photo_base64, prompt)
