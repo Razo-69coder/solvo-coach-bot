@@ -1068,7 +1068,9 @@ MOCK_BODY_ANALYSIS_RESPONSE = {
 BODY_ANALYSIS_PROMPT_TEMPLATE = (
     "Ты элитный персональный тренер с 15 годами опыта. Проанализируй фото тела клиента по шагам.\n\n"
     "Параметры клиента: цель={goal}, уровень подготовки={level}, "
-    "доступное оборудование={equipment}, ограничения={limitations}.\n\n"
+    "доступное оборудование={equipment}, ограничения={limitations}.\n"
+    "Данные автоматического анализа осанки (Apple Vision): {posture_data}. "
+    "Если данные есть — используй их как объективные измерения, они точнее визуальной оценки по фото.\n\n"
     "ШАГ 1 — АНАЛИЗ ТЕЛОСЛОЖЕНИЯ:\n"
     "- Определи пол клиента по фото (мужчина/женщина) — это критично для программы\n"
     "- Определи соматотип (эктоморф/мезоморф/эндоморф или смешанный)\n"
@@ -1104,6 +1106,7 @@ async def body_analysis_analyze(
     equipment: str = Form(...),
     limitations: str = Form(""),
     client_id: int = Form(0),
+    posture_data: str = Form(""),
     authorization: str = Header(None),
 ):
     user = _get_cal_ai_user(authorization)
@@ -1116,7 +1119,8 @@ async def body_analysis_analyze(
         photo_base64_side = base64.b64encode(await photo_side.read()).decode()
 
     prompt = BODY_ANALYSIS_PROMPT_TEMPLATE.format(
-        goal=goal, level=level, equipment=equipment, limitations=limitations
+        goal=goal, level=level, equipment=equipment, limitations=limitations,
+        posture_data=posture_data if posture_data else "не получены",
     )
 
     result = None
