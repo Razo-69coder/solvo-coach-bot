@@ -256,6 +256,20 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id SERIAL PRIMARY KEY,
+                trainer_id INTEGER REFERENCES trainers(id) ON DELETE CASCADE,
+                client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+                sender VARCHAR(10) NOT NULL CHECK (sender IN ('trainer', 'client')),
+                text TEXT NOT NULL,
+                is_read BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(trainer_id, client_id, created_at DESC)"
+        )
 
 
 async def _fetchrow(conn, sql, *args):
@@ -1435,3 +1449,63 @@ async def delete_supplement(supplement_id: int) -> bool:
     async with pool.connection() as conn:
         result = await _execute(conn, "DELETE FROM supplements WHERE id=%s", supplement_id)
         return "DELETE 1" in result
+
+
+# ─── Chat ──────────────────────────────────────────────────
+
+async def send_message(trainer_id: int, client_id: int, sender: str, text: str) -> dict:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        row = await _fetchrow(conn,
+            "INSERT INTO messages (trainer_id, client_id, sender, text) "
+            "VALUES (%s, %s, %s, %s) RETURNING id, sender, text, is_read, created_at",
+            trainer_id, client_id, sender, text)
+        await conn.execute(
+            "UPDATE messages SET is_read=TRUE WHERE trainer_id=%s AND client_id=%s AND sender=%s",
+            trainer_id, client_id, 'client' if sender == 'trainer' else 'trainer')
+        return {
+            "id": row["id"], "sender": row["sender"],
+            "text": row["text"], "is_read": row["is_read"],
+            "created_at": row["created_at"].isoformat(),
+        }
+
+
+async def get_messages(trainer_id: int, client_id: int, limit: int = 50) -> list:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        rows = await _fetch(conn,
+            "SELECT id, sender, text, is_read, created_at FROM messages "
+            "WHERE trainer_id=%s AND client_id=%s ORDER BY created_at ASC LIMIT %s",
+            trainer_id, client_id, limit)
+        return [{"id": r["id"], "sender": r["sender"], "text": r["text"],
+                 "is_read": r["is_read"], "created_at": r["created_at"].isoformat()} for r in rows]
+
+
+async def get_chat_threads(trainer_id: int) -> list:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        rows = await _fetch(conn, """
+            SELECT DISTINCT ON (m.client_id)
+                m.client_id, c.name as client_name,
+                m.text as last_message, m.sender as last_sender, m.created_at,
+                (SELECT COUNT(*) FROM messages
+                 WHERE trainer_id=%s AND client_id=m.client_id
+                 AND sender='client' AND is_read=FALSE) as unread_count
+            FROM messages m
+            JOIN clients c ON c.id = m.client_id
+            WHERE m.trainer_id=%s
+            ORDER BY m.client_id, m.created_at DESC
+        """, trainer_id, trainer_id)
+        return [{"client_id": r["client_id"], "client_name": r["client_name"],
+                 "last_message": r["last_message"], "last_sender": r["last_sender"],
+                 "created_at": r["created_at"].isoformat(),
+                 "unread_count": r["unread_count"]} for r in rows]
+
+
+async def mark_messages_read(trainer_id: int, client_id: int, reader: str):
+    pool = await get_pool()
+    sender = 'client' if reader == 'trainer' else 'trainer'
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE messages SET is_read=TRUE WHERE trainer_id=%s AND client_id=%s AND sender=%s",
+            trainer_id, client_id, sender)

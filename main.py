@@ -58,6 +58,10 @@ from database import (
     get_cal_ai_history,
     save_body_analysis,
     get_body_analysis_history,
+    send_message,
+    get_messages,
+    get_chat_threads,
+    mark_messages_read,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -1244,6 +1248,50 @@ async def call_claude_vision_opus(
     except Exception as e:
         print("Body Analysis exception:", str(e))
         return None
+
+
+# ─── Chat ─────────────────────────────────────────────────
+
+@app.post("/api/v1/chat/send")
+async def chat_send(
+    client_id: int = Form(...),
+    text: str = Form(...),
+    sender: str = Form("trainer"),
+    authorization: str = Header(None),
+):
+    if sender == "trainer":
+        trainer_id = await get_current_trainer_id(authorization)
+    else:
+        client = await get_current_client(authorization)
+        trainer_id = client["trainer_id"]
+        client_id = client["client_id"]
+    if not text.strip():
+        raise HTTPException(400, "Пустое сообщение")
+    msg = await send_message(trainer_id, client_id, sender, text.strip())
+    return msg
+
+
+@app.get("/api/v1/chat/messages/{client_id}")
+async def chat_messages(
+    client_id: int,
+    authorization: str = Header(None),
+):
+    trainer_id = await get_current_trainer_id(authorization)
+    await mark_messages_read(trainer_id, client_id, "trainer")
+    return {"messages": await get_messages(trainer_id, client_id)}
+
+
+@app.get("/api/v1/chat/my")
+async def chat_my_messages(authorization: str = Header(None)):
+    client = await get_current_client(authorization)
+    await mark_messages_read(client["trainer_id"], client["client_id"], "client")
+    return {"messages": await get_messages(client["trainer_id"], client["client_id"])}
+
+
+@app.get("/api/v1/chat/threads")
+async def chat_threads(authorization: str = Header(None)):
+    trainer_id = await get_current_trainer_id(authorization)
+    return {"threads": await get_chat_threads(trainer_id)}
 
 
 # ─── Health ───────────────────────────────────────────────
