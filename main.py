@@ -1078,11 +1078,11 @@ BODY_ANALYSIS_PROMPT_TEMPLATE = (
     "Ты элитный персональный тренер с 15 годами опыта. Проанализируй фото тела клиента по шагам.\n\n"
     "Параметры клиента: цель={goal}, уровень подготовки={level}, "
     "доступное оборудование={equipment}, ограничения={limitations}.\n"
-    "Данные автоматического анализа осанки (Apple Vision): {posture_data}.\n"
-    "ВАЖНО: если posture_data не пустой — ОБЯЗАТЕЛЬНО упомяни эти данные в body_analysis с конкретными цифрами.\n"
-    "Например: 'По данным Apple Vision: наклон плеч 8°, лёгкая сутулость, голова выдвинута вперёд — "
-    "рекомендуется акцент на укрепление мышц-разгибателей спины и трапеции.'\n"
-    "Не пиши просто 'сутулость' — пиши конкретно что измерил Vision (углы, направления).\n"
+    "Данные Apple Vision (объективные измерения): {posture_data}\n"
+    "ОБЯЗАТЕЛЬНО процитируй эти данные дословно в разделе body_analysis — например: "
+    "'Apple Vision зафиксировал: [вставь posture_data]'. "
+    "Затем дай рекомендацию под конкретные выявленные проблемы.\n"
+    "Если posture_data = 'осанка в норме' — напиши это явно.\n"
     "Если posture_data пустой — анализируй осанку визуально по фото как обычно.\n\n"
     "ШАГ 1 — АНАЛИЗ ТЕЛОСЛОЖЕНИЯ:\n"
     "- Определи пол клиента по фото (мужчина/женщина) — это критично для программы\n"
@@ -1119,10 +1119,13 @@ async def body_analysis_analyze(
     equipment: str = Form(...),
     limitations: str = Form(""),
     client_id: int = Form(0),
+    client_name: str = Form(""),
     posture_data: str = Form(""),
     authorization: str = Header(None),
 ):
     user = _get_cal_ai_user(authorization)
+
+    print(f"[body_analysis] posture_data='{posture_data}', client_name='{client_name}', client_id={client_id}")
 
     photo_base64_front = None
     photo_base64_side = None
@@ -1145,6 +1148,9 @@ async def body_analysis_analyze(
         result = dict(MOCK_BODY_ANALYSIS_RESPONSE)
         if ANTHROPIC_API_KEY:
             result["note"] = "Ошибка анализа, использована заглушка"
+
+    if client_name:
+        result["client_name"] = client_name
 
     await save_body_analysis(
         trainer_id=user["trainer_id"],
