@@ -20,6 +20,7 @@ class TrainerSettingsRequest(BaseModel):
     work_end: int
     slot_duration: int
     timezone: str = "Europe/Moscow"
+    payment_details: str = ""
 
 
 class ClientCreateRequest(BaseModel):
@@ -142,3 +143,38 @@ class SupplementUpdateRequest(BaseModel):
     dose: str = ""
     time_of_day: str
     notes: str = ""
+
+
+class ClientKBZHURequest(BaseModel):
+    calories: int
+    protein_g: int
+    fat_g: int
+    carbs_g: int
+    meal_count: int = 3
+
+
+class ClientKBZHUResponse(BaseModel):
+    id: int
+    calories: int
+    protein_g: int
+    fat_g: int
+    carbs_g: int
+    meal_count: int
+    is_active: bool
+    created_at: str
+
+
+class TechniqueVideoCreate(BaseModel):
+    title: str
+    url: str
+    description: str = ""
+    muscle_group: str = ""
+
+
+class TechniqueVideoResponse(BaseModel):
+    id: int
+    title: str
+    url: str
+    description: str
+    muscle_group: str
+    created_at: str

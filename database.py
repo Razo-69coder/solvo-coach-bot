@@ -283,6 +283,40 @@ async def init_db():
             "CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_type, user_id)"
         )
 
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS client_kbzhu (
+                id SERIAL PRIMARY KEY,
+                client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+                trainer_id INTEGER NOT NULL,
+                calories INTEGER NOT NULL,
+                protein_g INTEGER NOT NULL,
+                fat_g INTEGER NOT NULL,
+                carbs_g INTEGER NOT NULL,
+                meal_count INTEGER DEFAULT 3,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS technique_videos (
+                id SERIAL PRIMARY KEY,
+                trainer_id INTEGER NOT NULL REFERENCES trainers(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                url TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                muscle_group TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='trainers' AND column_name='payment_details') THEN
+                    ALTER TABLE trainers ADD COLUMN payment_details TEXT DEFAULT '';
+                END IF;
+            END $$;
+        """)
+
 
 async def _fetchrow(conn, sql, *args):
     async with conn.cursor(row_factory=dict_row) as cur:
@@ -334,16 +368,16 @@ async def get_trainer_by_id(trainer_id: int) -> dict | None:
     async with pool.connection() as conn:
         return await _fetchrow(conn,
             "SELECT id, email, name, phone, work_start, work_end, slot_duration, "
-            "timezone, theme, telegram_id, booking_link, is_active "
+            "timezone, theme, telegram_id, booking_link, is_active, payment_details "
             "FROM trainers WHERE id = %s", trainer_id)
 
 
-async def update_trainer_settings(trainer_id: int, name: str, work_start: int, work_end: int, slot_duration: int, timezone: str) -> None:
+async def update_trainer_settings(trainer_id: int, name: str, work_start: int, work_end: int, slot_duration: int, timezone: str, payment_details: str = "") -> None:
     pool = await get_pool()
     async with pool.connection() as conn:
         await _execute(conn,
-            "UPDATE trainers SET name=%s, work_start=%s, work_end=%s, slot_duration=%s, timezone=%s WHERE id=%s",
-            name, work_start, work_end, slot_duration, timezone, trainer_id)
+            "UPDATE trainers SET name=%s, work_start=%s, work_end=%s, slot_duration=%s, timezone=%s, payment_details=%s WHERE id=%s",
+            name, work_start, work_end, slot_duration, timezone, payment_details, trainer_id)
 
 
 async def set_trainer_active(trainer_id: int, is_active: bool) -> None:
@@ -1464,6 +1498,66 @@ async def delete_supplement(supplement_id: int) -> bool:
 
 
 # ─── Chat ──────────────────────────────────────────────────
+
+async def save_client_kbzhu(client_id: int, trainer_id: int, calories: int, protein_g: int, fat_g: int, carbs_g: int, meal_count: int = 3) -> dict:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await _execute(conn,
+            "UPDATE client_kbzhu SET is_active=FALSE WHERE client_id=%s AND trainer_id=%s",
+            client_id, trainer_id)
+        row = await _fetchrow(conn,
+            "INSERT INTO client_kbzhu (client_id, trainer_id, calories, protein_g, fat_g, carbs_g, meal_count) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id, calories, protein_g, fat_g, carbs_g, meal_count",
+            client_id, trainer_id, calories, protein_g, fat_g, carbs_g, meal_count)
+        return {"id": row["id"], "calories": row["calories"],
+                "protein_g": row["protein_g"], "fat_g": row["fat_g"],
+                "carbs_g": row["carbs_g"], "meal_count": row["meal_count"]}
+
+
+async def get_client_kbzhu(client_id: int, trainer_id: int) -> dict | None:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        row = await _fetchrow(conn,
+            "SELECT id, calories, protein_g, fat_g, carbs_g, meal_count, is_active, created_at "
+            "FROM client_kbzhu WHERE client_id=%s AND trainer_id=%s AND is_active=TRUE "
+            "ORDER BY created_at DESC LIMIT 1",
+            client_id, trainer_id)
+        if not row:
+            return None
+        return {"id": row["id"], "calories": row["calories"],
+                "protein_g": row["protein_g"], "fat_g": row["fat_g"],
+                "carbs_g": row["carbs_g"], "meal_count": row["meal_count"],
+                "is_active": row["is_active"], "created_at": row["created_at"].isoformat()}
+
+
+async def get_technique_videos(trainer_id: int) -> list[dict]:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        return await _fetch(conn,
+            "SELECT id, title, url, description, muscle_group, created_at "
+            "FROM technique_videos WHERE trainer_id=%s ORDER BY created_at DESC",
+            trainer_id)
+
+
+async def create_technique_video(trainer_id: int, title: str, url: str, description: str = "", muscle_group: str = "") -> dict:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        row = await _fetchrow(conn,
+            "INSERT INTO technique_videos (trainer_id, title, url, description, muscle_group) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING id, title, url, description, muscle_group, created_at",
+            trainer_id, title, url, description, muscle_group)
+        return {"id": row["id"], "title": row["title"], "url": row["url"],
+                "description": row["description"], "muscle_group": row["muscle_group"],
+                "created_at": row["created_at"].isoformat()}
+
+
+async def delete_technique_video(video_id: int, trainer_id: int) -> None:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await _execute(conn,
+            "DELETE FROM technique_videos WHERE id=%s AND trainer_id=%s",
+            video_id, trainer_id)
+
 
 async def send_message(trainer_id: int, client_id: int, sender: str, text: str) -> dict:
     pool = await get_pool()

@@ -64,6 +64,11 @@ from database import (
     mark_messages_read,
     save_device_token,
     get_device_tokens,
+    save_client_kbzhu,
+    get_client_kbzhu,
+    get_technique_videos,
+    create_technique_video,
+    delete_technique_video,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -78,6 +83,8 @@ from models import (
     OnboardingMetaRequest,
     SupplementCreateRequest,
     SupplementUpdateRequest,
+    ClientKBZHURequest,
+    TechniqueVideoCreate,
 )
 
 load_dotenv()
@@ -269,7 +276,7 @@ async def get_me(trainer_id: int = Depends(get_current_trainer_id)):  # type: ig
 async def update_settings(body: TrainerSettingsRequest, trainer_id: int = Depends(get_current_trainer_id)):  # type: ignore
     await update_trainer_settings(
         trainer_id, body.name, body.work_start, body.work_end,
-        body.slot_duration, body.timezone
+        body.slot_duration, body.timezone, body.payment_details
     )
     return {"ok": True}
 
@@ -1293,6 +1300,60 @@ async def call_claude_vision_opus(
     except Exception as e:
         print("Body Analysis exception:", str(e))
         return None
+
+
+# ─── KBZHU ────────────────────────────────────────────────
+
+
+@app.post("/api/v1/clients/{client_id}/kbzhu")
+async def create_client_kbzhu(
+    client_id: int,
+    body: ClientKBZHURequest,
+    trainer_id: int = Depends(get_current_trainer_id),
+):
+    result = await save_client_kbzhu(
+        client_id, trainer_id, body.calories, body.protein_g,
+        body.fat_g, body.carbs_g, body.meal_count
+    )
+    return result
+
+
+@app.get("/api/v1/clients/{client_id}/kbzhu")
+async def read_client_kbzhu(
+    client_id: int,
+    trainer_id: int = Depends(get_current_trainer_id),
+):
+    result = await get_client_kbzhu(client_id, trainer_id)
+    if not result:
+        raise HTTPException(404, "КБЖУ не рассчитаны")
+    return result
+
+
+# ─── Technique Videos ──────────────────────────────────────
+
+
+@app.get("/api/v1/technique-videos")
+async def list_technique_videos(trainer_id: int = Depends(get_current_trainer_id)):
+    return {"videos": await get_technique_videos(trainer_id)}
+
+
+@app.post("/api/v1/technique-videos", status_code=201)
+async def create_technique_video_endpoint(
+    body: TechniqueVideoCreate,
+    trainer_id: int = Depends(get_current_trainer_id),
+):
+    return await create_technique_video(
+        trainer_id, body.title, body.url, body.description, body.muscle_group
+    )
+
+
+@app.delete("/api/v1/technique-videos/{video_id}")
+async def delete_technique_video_endpoint(
+    video_id: int,
+    trainer_id: int = Depends(get_current_trainer_id),
+):
+    await delete_technique_video(video_id, trainer_id)
+    return {"ok": True}
 
 
 # ─── Chat ─────────────────────────────────────────────────
