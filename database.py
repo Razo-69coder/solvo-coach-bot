@@ -270,6 +270,18 @@ async def init_db():
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(trainer_id, client_id, created_at DESC)"
         )
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS device_tokens (
+                id SERIAL PRIMARY KEY,
+                user_type VARCHAR(10) NOT NULL CHECK (user_type IN ('trainer', 'client')),
+                user_id INTEGER NOT NULL,
+                token TEXT NOT NULL UNIQUE,
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_type, user_id)"
+        )
 
 
 async def _fetchrow(conn, sql, *args):
@@ -1509,3 +1521,22 @@ async def mark_messages_read(trainer_id: int, client_id: int, reader: str):
         await conn.execute(
             "UPDATE messages SET is_read=TRUE WHERE trainer_id=%s AND client_id=%s AND sender=%s",
             trainer_id, client_id, sender)
+
+
+async def save_device_token(user_type: str, user_id: int, token: str):
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await conn.execute("""
+            INSERT INTO device_tokens (user_type, user_id, token, updated_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (token) DO UPDATE SET user_type=%s, user_id=%s, updated_at=NOW()
+        """, user_type, user_id, token, user_type, user_id)
+
+
+async def get_device_tokens(user_type: str, user_id: int) -> list[str]:
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        rows = await _fetch(conn,
+            "SELECT token FROM device_tokens WHERE user_type=%s AND user_id=%s",
+            user_type, user_id)
+        return [r["token"] for r in rows]

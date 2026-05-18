@@ -62,6 +62,8 @@ from database import (
     get_messages,
     get_chat_threads,
     mark_messages_read,
+    save_device_token,
+    get_device_tokens,
 )
 from models import (
     TrainerRegisterRequest, TrainerLoginRequest, TrainerSettingsRequest,
@@ -86,6 +88,12 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 SUPPORT_BOT_TOKEN = os.getenv("SUPPORT_BOT_TOKEN", "")
 ADMIN_TG_ID = int(os.getenv("ADMIN_TG_ID", "550421233"))
+
+APNS_KEY_ID = os.getenv("APNS_KEY_ID", "")
+APNS_TEAM_ID = os.getenv("APNS_TEAM_ID", "")
+APNS_PRIVATE_KEY = os.getenv("APNS_PRIVATE_KEY", "").replace("\\n", "\n")
+APNS_BUNDLE_ID = os.getenv("APNS_BUNDLE_ID", "")
+APNS_USE_SANDBOX = os.getenv("APNS_USE_SANDBOX", "true").lower() == "true"
 
 
 # ─── Lifespan ─────────────────────────────────────────────
@@ -1115,6 +1123,43 @@ BODY_ANALYSIS_PROMPT_TEMPLATE = (
 )
 
 
+# ─── APNs Push ─────────────────────────────────────────────
+
+async def send_push(device_token: str, title: str, body: str) -> bool:
+    if not all([APNS_KEY_ID, APNS_TEAM_ID, APNS_PRIVATE_KEY, APNS_BUNDLE_ID]):
+        return False
+    try:
+        import time
+        token = jwt.encode(
+            {"iss": APNS_TEAM_ID, "iat": int(time.time())},
+            APNS_PRIVATE_KEY,
+            algorithm="ES256",
+            headers={"kid": APNS_KEY_ID}
+        )
+        host = "api.sandbox.push.apple.com" if APNS_USE_SANDBOX else "api.push.apple.com"
+        url = f"https://{host}/3/device/{device_token}"
+        headers = {
+            "authorization": f"bearer {token}",
+            "apns-topic": APNS_BUNDLE_ID,
+            "apns-push-type": "alert",
+            "apns-priority": "10",
+        }
+        payload = {"aps": {"alert": {"title": title, "body": body}, "sound": "default"}}
+        async with httpx.AsyncClient(http2=True) as client:
+            resp = await client.post(url, json=payload, headers=headers, timeout=10)
+            print(f"[APNs] token={device_token[:16]}... status={resp.status_code}")
+            return resp.status_code == 200
+    except Exception as e:
+        print(f"[APNs] error: {e}")
+        return False
+
+
+async def push_to_user(user_type: str, user_id: int, title: str, body: str):
+    tokens = await get_device_tokens(user_type, user_id)
+    for token in tokens:
+        await send_push(token, title, body)
+
+
 @app.post("/api/v1/body-analysis/analyze")
 async def body_analysis_analyze(
     photo_front: UploadFile = File(None),
@@ -1268,6 +1313,10 @@ async def chat_send(
     if not text.strip():
         raise HTTPException(400, "Пустое сообщение")
     msg = await send_message(trainer_id, client_id, sender, text.strip())
+    if sender == "trainer":
+        await push_to_user("client", client_id, "Тренер написал", text[:100])
+    else:
+        await push_to_user("trainer", trainer_id, "Клиент написал", text[:100])
     return msg
 
 
@@ -1292,6 +1341,21 @@ async def chat_my_messages(authorization: str = Header(None)):
 async def chat_threads(authorization: str = Header(None)):
     trainer_id = await get_current_trainer_id(authorization)
     return {"threads": await get_chat_threads(trainer_id)}
+
+
+@app.post("/api/v1/device/token")
+async def register_device_token(
+    token: str = Form(...),
+    user_type: str = Form("trainer"),
+    authorization: str = Header(None),
+):
+    if user_type == "trainer":
+        user_id = await get_current_trainer_id(authorization)
+    else:
+        client = await get_current_client(authorization)
+        user_id = client["client_id"]
+    await save_device_token(user_type, user_id, token)
+    return {"ok": True}
 
 
 # ─── Health ───────────────────────────────────────────────
